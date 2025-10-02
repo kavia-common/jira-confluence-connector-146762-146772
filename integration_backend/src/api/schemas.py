@@ -110,6 +110,10 @@ class ConnectResponse(BaseModel):
     provider: str = Field(..., description="Provider name, e.g., 'jira' or 'confluence'.")
     base_url: str = Field(..., description="Saved base URL.")
     connected: bool = Field(..., description="Whether settings were saved successfully.")
+    redirect_url: Optional[str] = Field(
+        None,
+        description="Optional URL to which the frontend should redirect after successful verification.",
+    )
 
 
 # PUBLIC_INTERFACE

@@ -21,7 +21,6 @@ from src.api.schemas import (
     ConfluencePageCreate,
     ConfluencePageRead,
     AuthTokenResponse,
-    ConnectRequest,
     ConnectResponse,
     JiraProjectsFetchResponse,
     ConfluencePagesFetchResponse,
@@ -216,27 +215,42 @@ def get_user_endpoint(user_id: int, db=Depends(get_db), current_user=Depends(get
     "/integrations/jira/connect",
     tags=["Integrations"],
     response_model=ConnectResponse,
-    summary="Connect JIRA (placeholder)",
-    description="Accepts base URL and token; stores them for the current user. Does not call JIRA API in this demo.",
+    summary="Connect JIRA (auto, no user input)",
+    description="Automatically uses hard-coded credentials to connect to JIRA, verifies, and stores for the current user.",
 )
-def connect_jira(payload: ConnectRequest, db=Depends(get_db), current_user=Depends(get_current_user)):
+def connect_jira(db=Depends(get_db), current_user=Depends(get_current_user)):
     """
-    Store JIRA connection details for the current user (demo-only).
+    Store JIRA connection details for the current user using hard-coded credentials (demo-only).
+    No user-provided payload required. On success, returns redirect_url to JIRA.
 
-    Parameters:
-        payload: ConnectRequest containing base_url and access_token (placeholder)
     Returns:
-        ConnectResponse summary of saved settings.
+        ConnectResponse summary of saved settings including optional redirect_url.
     """
-    # Update user record with placeholder credentials
+    # Lazy import to avoid circulars and keep dependency surface small
+    from src.api.integrations_config import get_jira_credentials
+
+    creds = get_jira_credentials()
+    base_url = creds["base_url"]
+    access_token = creds["access_token"]
+
+    # Simulated verification step:
+    # In a real integration you would call JIRA's REST API using httpx with the token,
+    # for example GET /rest/api/3/myself. Here we simply check non-empty token.
+    if not base_url or not access_token:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="JIRA credentials are not configured")
+
     user = get_user_by_id(db, current_user.id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    user.jira_base_url = payload.base_url
-    user.jira_token = payload.access_token
+
+    # Save credentials to the user record
+    user.jira_base_url = base_url
+    user.jira_token = access_token
     db.commit()
     db.refresh(user)
-    return ConnectResponse(provider="jira", base_url=user.jira_base_url, connected=True)
+
+    redirect = f"{base_url}/jira/your-work" if base_url else None
+    return ConnectResponse(provider="jira", base_url=user.jira_base_url, connected=True, redirect_url=redirect)
 
 
 # PUBLIC_INTERFACE
@@ -244,26 +258,40 @@ def connect_jira(payload: ConnectRequest, db=Depends(get_db), current_user=Depen
     "/integrations/confluence/connect",
     tags=["Integrations"],
     response_model=ConnectResponse,
-    summary="Connect Confluence (placeholder)",
-    description="Accepts base URL and token; stores them for the current user. Does not call Confluence API in this demo.",
+    summary="Connect Confluence (auto, no user input)",
+    description="Automatically uses hard-coded credentials to connect to Confluence, verifies, and stores for the current user.",
 )
-def connect_confluence(payload: ConnectRequest, db=Depends(get_db), current_user=Depends(get_current_user)):
+def connect_confluence(db=Depends(get_db), current_user=Depends(get_current_user)):
     """
-    Store Confluence connection details for the current user (demo-only).
+    Store Confluence connection details for the current user using hard-coded credentials (demo-only).
+    No user-provided payload required. On success, returns redirect_url to Confluence.
 
-    Parameters:
-        payload: ConnectRequest containing base_url and access_token (placeholder)
     Returns:
-        ConnectResponse summary of saved settings.
+        ConnectResponse summary of saved settings including optional redirect_url.
     """
+    from src.api.integrations_config import get_confluence_credentials
+
+    creds = get_confluence_credentials()
+    base_url = creds["base_url"]
+    access_token = creds["access_token"]
+
+    # Simulated verification step:
+    # In a real integration you would call Confluence's REST API with the token,
+    # e.g., GET /wiki/rest/api/user/current. Here we simply check non-empty token.
+    if not base_url or not access_token:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Confluence credentials are not configured")
+
     user = get_user_by_id(db, current_user.id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    user.confluence_base_url = payload.base_url
-    user.confluence_token = payload.access_token
+
+    user.confluence_base_url = base_url
+    user.confluence_token = access_token
     db.commit()
     db.refresh(user)
-    return ConnectResponse(provider="confluence", base_url=user.confluence_base_url, connected=True)
+
+    redirect = f"{base_url}/spaces/viewspacesummary.action" if base_url else None
+    return ConnectResponse(provider="confluence", base_url=user.confluence_base_url, connected=True, redirect_url=redirect)
 
 
 # -----------------------
