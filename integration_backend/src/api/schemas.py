@@ -4,7 +4,7 @@ Pydantic models for API requests and responses.
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Optional, List
 from pydantic import BaseModel, Field, EmailStr
 
 
@@ -82,3 +82,47 @@ class ConfluencePageRead(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# ---- Auth and Integration helper schemas ----
+
+# PUBLIC_INTERFACE
+class AuthTokenResponse(BaseModel):
+    """Response model for issuing a demo bearer token."""
+
+    access_token: str = Field(..., description="Bearer token string (demo).")
+    token_type: str = Field(..., description="Token type; 'bearer' in this demo.")
+    user: UserRead = Field(..., description="User profile associated with the token.")
+
+
+# PUBLIC_INTERFACE
+class ConnectRequest(BaseModel):
+    """Payload to save base URL and access token for an integration provider."""
+
+    base_url: str = Field(..., description="Base URL for the provider API.")
+    access_token: str = Field(..., description="Access token or API key (demo-only).")
+
+
+# PUBLIC_INTERFACE
+class ConnectResponse(BaseModel):
+    """Response confirming connection settings were saved."""
+
+    provider: str = Field(..., description="Provider name, e.g., 'jira' or 'confluence'.")
+    base_url: str = Field(..., description="Saved base URL.")
+    connected: bool = Field(..., description="Whether settings were saved successfully.")
+
+
+# PUBLIC_INTERFACE
+class JiraProjectsFetchResponse(BaseModel):
+    """Response wrapper for fetched JIRA projects (placeholder from persistence)."""
+
+    provider: str = Field(..., description="Provider name, always 'jira' here.")
+    items: List[JiraProjectRead] = Field(..., description="List of stored projects.")
+
+
+# PUBLIC_INTERFACE
+class ConfluencePagesFetchResponse(BaseModel):
+    """Response wrapper for fetched Confluence pages (placeholder from persistence)."""
+
+    provider: str = Field(..., description="Provider name, always 'confluence' here.")
+    items: List[ConfluencePageRead] = Field(..., description="List of stored pages.")

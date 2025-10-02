@@ -15,3 +15,20 @@ This backend includes a lightweight SQLAlchemy-based persistence layer using SQL
    - `uvicorn src.api.main:app --reload --port 3001 --app-dir integration_backend`
 4. Generate OpenAPI spec (optional, while API is running is not required):
    - `python -m src.api.generate_openapi` (run from `integration_backend` directory)
+
+### API Highlights
+- Auth (demo):
+  - POST /auth/token -> returns a demo bearer token tied to a created/updated user
+  - Use header: `Authorization: Bearer demo-token-user-<id>`
+- Users:
+  - POST /users -> create/idempotent user
+  - GET /users -> list users (requires Authorization)
+  - GET /users/{user_id} -> fetch user (requires Authorization)
+- Integrations (placeholders):
+  - POST /integrations/jira/connect -> save JIRA base_url and token for current user
+  - POST /integrations/confluence/connect -> save Confluence base_url and token for current user
+  - GET /integrations/jira/projects/fetch -> returns stored JIRA projects for current user
+  - GET /integrations/confluence/pages/fetch -> returns stored Confluence pages for current user
+- Data operations:
+  - POST /jira/projects, GET /jira/projects/{owner_id}
+  - POST /confluence/pages, GET /confluence/pages/{owner_id}
