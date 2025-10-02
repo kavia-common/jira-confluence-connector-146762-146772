@@ -1,6 +1,6 @@
-from fastapi import FastAPI, Depends, HTTPException, status, Header
+from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
-from typing import List, Optional, Dict, Any
+from typing import List, Dict, Any
 
 from src.db.config import Base, engine, get_db
 
@@ -20,7 +20,6 @@ from src.api.schemas import (
     JiraProjectRead,
     ConfluencePageCreate,
     ConfluencePageRead,
-    AuthTokenResponse,
     ConnectResponse,
     JiraProjectsFetchResponse,
     ConfluencePagesFetchResponse,
@@ -29,7 +28,6 @@ from src.api.schemas import (
 openapi_tags = [
     {"name": "Health", "description": "Health and readiness checks."},
     {"name": "Users", "description": "Manage users who connect JIRA/Confluence."},
-    {"name": "Auth", "description": "Authentication stubs and token/session handling."},
     {"name": "JIRA Projects", "description": "Manage synced JIRA projects."},
     {"name": "Confluence Pages", "description": "Manage synced Confluence pages."},
     {"name": "Integrations", "description": "Connect and fetch from JIRA/Confluence (placeholders)."},
@@ -75,68 +73,7 @@ def health_check():
     return _ocean_response({"service": "integration_backend", "health": "healthy"}, "service healthy")
 
 
-# -----------------------
-# Authentication (stubs)
-# -----------------------
-
-# PUBLIC_INTERFACE
-@app.post(
-    "/auth/token",
-    tags=["Auth"],
-    response_model=AuthTokenResponse,
-    summary="Issue demo auth token",
-    description="Demo-only token endpoint. In production, use OAuth/OIDC or session-based auth.",
-)
-def issue_token(payload: UserCreate, db=Depends(get_db)):
-    """
-    Create a demo user (idempotent) and return a placeholder bearer token.
-
-    Parameters:
-        payload: UserCreate - user info (email required)
-    Returns:
-        AuthTokenResponse with a mock token and user info.
-    """
-    user = create_user(
-        db,
-        email=payload.email,
-        display_name=payload.display_name,
-        jira_token=payload.jira_token,
-        confluence_token=payload.confluence_token,
-        jira_base_url=payload.jira_base_url,
-        confluence_base_url=payload.confluence_base_url,
-    )
-    # WARNING: This is a demo token; replace with secure JWT or session in production
-    token = f"demo-token-user-{user.id}"
-    return AuthTokenResponse(access_token=token, token_type="bearer", user=UserRead.model_validate(user))
-
-
-def get_current_user(
-    authorization: Optional[str] = Header(default=None),
-    db=Depends(get_db),
-):
-    """
-    Dependency stub to resolve a current user from a demo bearer token.
-
-    Token format: 'Bearer demo-token-user-<id>'
-    """
-    if not authorization:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing Authorization header")
-    try:
-        scheme, token = authorization.split(" ")
-    except ValueError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid Authorization header")
-    if scheme.lower() != "bearer" or not token.startswith("demo-token-user-"):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
-    user_id_str = token.replace("demo-token-user-", "").strip()
-    if not user_id_str.isdigit():
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")
-    user = get_user_by_id(db, int(user_id_str))
-    if not user:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found for token")
-    return user
-
-
-# Users
+# Users (Public)
 # PUBLIC_INTERFACE
 @app.post(
     "/users",
@@ -175,12 +112,12 @@ def create_user_endpoint(payload: UserCreate, db=Depends(get_db)):
     summary="List users",
     description="List all users.",
 )
-def list_users_endpoint(db=Depends(get_db), current_user=Depends(get_current_user)):
+def list_users_endpoint(db=Depends(get_db)):
     """
     List all users.
 
-    Security:
-        Requires a valid demo bearer token.
+    Note:
+        This endpoint is public and does not require authentication.
     """
     return list_users(db)
 
@@ -193,7 +130,7 @@ def list_users_endpoint(db=Depends(get_db), current_user=Depends(get_current_use
     summary="Get user by ID",
     description="Retrieve a user by its internal ID.",
 )
-def get_user_endpoint(user_id: int, db=Depends(get_db), current_user=Depends(get_current_user)):
+def get_user_endpoint(user_id: int, db=Depends(get_db)):
     """
     Get a single user by ID.
 
@@ -207,7 +144,7 @@ def get_user_endpoint(user_id: int, db=Depends(get_db), current_user=Depends(get
 
 
 # -----------------------
-# Integrations - Connect
+# Integrations - Connect (Public demo flows)
 # -----------------------
 
 # PUBLIC_INTERFACE
@@ -216,12 +153,12 @@ def get_user_endpoint(user_id: int, db=Depends(get_db), current_user=Depends(get
     tags=["Integrations"],
     response_model=ConnectResponse,
     summary="Connect JIRA (auto, no user input)",
-    description="Automatically uses hard-coded credentials to connect to JIRA, verifies, and stores for the current user.",
+    description="Automatically uses hard-coded credentials to connect to JIRA and store on the target user.",
 )
-def connect_jira(db=Depends(get_db), current_user=Depends(get_current_user)):
+def connect_jira(db=Depends(get_db), payload: UserCreate | None = None):
     """
-    Store JIRA connection details for the current user using hard-coded credentials (demo-only).
-    No user-provided payload required. On success, returns redirect_url to JIRA.
+    Store JIRA connection details using hard-coded credentials (demo-only).
+    If a user exists for the provided email, it will be used; otherwise a user can be created first via /users.
 
     Returns:
         ConnectResponse summary of saved settings including optional redirect_url.
@@ -233,24 +170,38 @@ def connect_jira(db=Depends(get_db), current_user=Depends(get_current_user)):
     base_url = creds["base_url"]
     access_token = creds["access_token"]
 
-    # Simulated verification step:
-    # In a real integration you would call JIRA's REST API using httpx with the token,
-    # for example GET /rest/api/3/myself. Here we simply check non-empty token.
     if not base_url or not access_token:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="JIRA credentials are not configured")
 
-    user = get_user_by_id(db, current_user.id)
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+    # For demo simplicity, if payload with email is provided, upsert/get that user; else use first user if any.
+    target_user = None
+    if payload and payload.email:
+        target_user = create_user(
+            db,
+            email=payload.email,
+            display_name=payload.display_name,
+            jira_token=payload.jira_token,
+            confluence_token=payload.confluence_token,
+            jira_base_url=payload.jira_base_url,
+            confluence_base_url=payload.confluence_base_url,
+        )
+    else:
+        users = list_users(db)
+        target_user = users[0] if users else None
 
-    # Save credentials to the user record
-    user.jira_base_url = base_url
-    user.jira_token = access_token
+    if not target_user:
+        raise HTTPException(
+            status_code=400,
+            detail="No user available. Create a user first via POST /users (provide an email).",
+        )
+
+    target_user.jira_base_url = base_url
+    target_user.jira_token = access_token
     db.commit()
-    db.refresh(user)
+    db.refresh(target_user)
 
     redirect = f"{base_url}/jira/your-work" if base_url else None
-    return ConnectResponse(provider="jira", base_url=user.jira_base_url, connected=True, redirect_url=redirect)
+    return ConnectResponse(provider="jira", base_url=target_user.jira_base_url, connected=True, redirect_url=redirect)
 
 
 # PUBLIC_INTERFACE
@@ -259,12 +210,12 @@ def connect_jira(db=Depends(get_db), current_user=Depends(get_current_user)):
     tags=["Integrations"],
     response_model=ConnectResponse,
     summary="Connect Confluence (auto, no user input)",
-    description="Automatically uses hard-coded credentials to connect to Confluence, verifies, and stores for the current user.",
+    description="Automatically uses hard-coded credentials to connect to Confluence and store on the target user.",
 )
-def connect_confluence(db=Depends(get_db), current_user=Depends(get_current_user)):
+def connect_confluence(db=Depends(get_db), payload: UserCreate | None = None):
     """
-    Store Confluence connection details for the current user using hard-coded credentials (demo-only).
-    No user-provided payload required. On success, returns redirect_url to Confluence.
+    Store Confluence connection details using hard-coded credentials (demo-only).
+    If a user exists for the provided email, it will be used; otherwise a user can be created first via /users.
 
     Returns:
         ConnectResponse summary of saved settings including optional redirect_url.
@@ -275,27 +226,41 @@ def connect_confluence(db=Depends(get_db), current_user=Depends(get_current_user
     base_url = creds["base_url"]
     access_token = creds["access_token"]
 
-    # Simulated verification step:
-    # In a real integration you would call Confluence's REST API with the token,
-    # e.g., GET /wiki/rest/api/user/current. Here we simply check non-empty token.
     if not base_url or not access_token:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Confluence credentials are not configured")
 
-    user = get_user_by_id(db, current_user.id)
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+    target_user = None
+    if payload and payload.email:
+        target_user = create_user(
+            db,
+            email=payload.email,
+            display_name=payload.display_name,
+            jira_token=payload.jira_token,
+            confluence_token=payload.confluence_token,
+            jira_base_url=payload.jira_base_url,
+            confluence_base_url=payload.confluence_base_url,
+        )
+    else:
+        users = list_users(db)
+        target_user = users[0] if users else None
 
-    user.confluence_base_url = base_url
-    user.confluence_token = access_token
+    if not target_user:
+        raise HTTPException(
+            status_code=400,
+            detail="No user available. Create a user first via POST /users (provide an email).",
+        )
+
+    target_user.confluence_base_url = base_url
+    target_user.confluence_token = access_token
     db.commit()
-    db.refresh(user)
+    db.refresh(target_user)
 
     redirect = f"{base_url}/spaces/viewspacesummary.action" if base_url else None
-    return ConnectResponse(provider="confluence", base_url=user.confluence_base_url, connected=True, redirect_url=redirect)
+    return ConnectResponse(provider="confluence", base_url=target_user.confluence_base_url, connected=True, redirect_url=redirect)
 
 
 # -----------------------
-# Integrations - Fetch (placeholders)
+# Integrations - Fetch (placeholders) - Public
 # -----------------------
 
 # PUBLIC_INTERFACE
@@ -304,14 +269,20 @@ def connect_confluence(db=Depends(get_db), current_user=Depends(get_current_user
     tags=["Integrations", "JIRA Projects"],
     response_model=JiraProjectsFetchResponse,
     summary="Fetch JIRA projects (placeholder)",
-    description="Fetches projects from JIRA for the current user (demo: returns stored projects only).",
+    description="Fetches projects from JIRA for a user (demo: returns stored projects only). If none specified, uses the first user.",
 )
-def fetch_jira_projects(db=Depends(get_db), current_user=Depends(get_current_user)):
+def fetch_jira_projects(db=Depends(get_db), owner_id: int | None = None):
     """
-    Placeholder fetch: In production, use the stored base URL and token to query JIRA,
-    then upsert results. Here, we simply return what's stored.
+    Placeholder fetch: uses stored base URL and token to query JIRA (omitted), and returns what's stored.
+    If owner_id is not provided, the first user (if any) is used.
     """
-    projects = list_jira_projects_for_user(db, current_user.id)
+    resolved_owner_id = owner_id
+    if resolved_owner_id is None:
+        users = list_users(db)
+        if not users:
+            return JiraProjectsFetchResponse(provider="jira", items=[])
+        resolved_owner_id = users[0].id
+    projects = list_jira_projects_for_user(db, resolved_owner_id)
     return JiraProjectsFetchResponse(provider="jira", items=projects)
 
 
@@ -321,18 +292,24 @@ def fetch_jira_projects(db=Depends(get_db), current_user=Depends(get_current_use
     tags=["Integrations", "Confluence Pages"],
     response_model=ConfluencePagesFetchResponse,
     summary="Fetch Confluence pages (placeholder)",
-    description="Fetches pages from Confluence for the current user (demo: returns stored pages only).",
+    description="Fetches pages from Confluence for a user (demo: returns stored pages only). If none specified, uses the first user.",
 )
-def fetch_confluence_pages(db=Depends(get_db), current_user=Depends(get_current_user)):
+def fetch_confluence_pages(db=Depends(get_db), owner_id: int | None = None):
     """
-    Placeholder fetch: In production, use the stored base URL and token to query Confluence,
-    then upsert results. Here, we simply return what's stored.
+    Placeholder fetch: uses stored base URL and token to query Confluence (omitted), and returns what's stored.
+    If owner_id is not provided, the first user (if any) is used.
     """
-    pages = list_confluence_pages_for_user(db, current_user.id)
+    resolved_owner_id = owner_id
+    if resolved_owner_id is None:
+        users = list_users(db)
+        if not users:
+            return ConfluencePagesFetchResponse(provider="confluence", items=[])
+        resolved_owner_id = users[0].id
+    pages = list_confluence_pages_for_user(db, resolved_owner_id)
     return ConfluencePagesFetchResponse(provider="confluence", items=pages)
 
 
-# JIRA Projects
+# JIRA Projects (Public)
 # PUBLIC_INTERFACE
 @app.post(
     "/jira/projects",
@@ -342,7 +319,7 @@ def fetch_confluence_pages(db=Depends(get_db), current_user=Depends(get_current_
     summary="Upsert JIRA project",
     description="Create or update a JIRA project for a given user keyed by (owner_id, key).",
 )
-def upsert_jira_project_endpoint(payload: JiraProjectCreate, db=Depends(get_db), current_user=Depends(get_current_user)):
+def upsert_jira_project_endpoint(payload: JiraProjectCreate, db=Depends(get_db)):
     """
     Upsert a JIRA project tied to a user.
     """
@@ -364,14 +341,14 @@ def upsert_jira_project_endpoint(payload: JiraProjectCreate, db=Depends(get_db),
     summary="List JIRA projects for user",
     description="List all JIRA projects owned by the given user.",
 )
-def list_jira_projects_endpoint(owner_id: int, db=Depends(get_db), current_user=Depends(get_current_user)):
+def list_jira_projects_endpoint(owner_id: int, db=Depends(get_db)):
     """
     List all stored JIRA projects for a specific owner.
     """
     return list_jira_projects_for_user(db, owner_id)
 
 
-# Confluence Pages
+# Confluence Pages (Public)
 # PUBLIC_INTERFACE
 @app.post(
     "/confluence/pages",
@@ -381,7 +358,7 @@ def list_jira_projects_endpoint(owner_id: int, db=Depends(get_db), current_user=
     summary="Upsert Confluence page",
     description="Create or update a Confluence page for a given user keyed by (owner_id, space_key, page_id).",
 )
-def upsert_confluence_page_endpoint(payload: ConfluencePageCreate, db=Depends(get_db), current_user=Depends(get_current_user)):
+def upsert_confluence_page_endpoint(payload: ConfluencePageCreate, db=Depends(get_db)):
     """
     Upsert a Confluence page tied to a user.
     """
@@ -403,7 +380,7 @@ def upsert_confluence_page_endpoint(payload: ConfluencePageCreate, db=Depends(ge
     summary="List Confluence pages for user",
     description="List all Confluence pages owned by the given user.",
 )
-def list_confluence_pages_endpoint(owner_id: int, db=Depends(get_db), current_user=Depends(get_current_user)):
+def list_confluence_pages_endpoint(owner_id: int, db=Depends(get_db)):
     """
     List all stored Confluence pages for a specific owner.
     """

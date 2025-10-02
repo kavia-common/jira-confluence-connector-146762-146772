@@ -84,24 +84,7 @@ class ConfluencePageRead(BaseModel):
         from_attributes = True
 
 
-# ---- Auth and Integration helper schemas ----
-
-# PUBLIC_INTERFACE
-class AuthTokenResponse(BaseModel):
-    """Response model for issuing a demo bearer token."""
-
-    access_token: str = Field(..., description="Bearer token string (demo).")
-    token_type: str = Field(..., description="Token type; 'bearer' in this demo.")
-    user: UserRead = Field(..., description="User profile associated with the token.")
-
-
-# PUBLIC_INTERFACE
-class ConnectRequest(BaseModel):
-    """Payload to save base URL and access token for an integration provider."""
-
-    base_url: str = Field(..., description="Base URL for the provider API.")
-    access_token: str = Field(..., description="Access token or API key (demo-only).")
-
+# ---- Integration helper response schemas (auth removed) ----
 
 # PUBLIC_INTERFACE
 class ConnectResponse(BaseModel):
