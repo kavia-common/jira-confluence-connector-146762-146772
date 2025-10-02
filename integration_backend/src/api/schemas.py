@@ -85,6 +85,11 @@ class ConfluencePageRead(BaseModel):
 
 
 # ---- Integration helper response schemas (auth removed) ----
+# Note for frontend:
+# - To start OAuth, open GET /auth/jira/login (or /auth/confluence/login).
+# - Atlassian will redirect to our /auth/.../callback which will persist tokens server-side.
+# - On success we redirect to APP_FRONTEND_URL + /oauth/callback?provider=...&status=success&user_id=...
+#   Your frontend should handle this route and update UI state accordingly (e.g., "Connected").
 
 # PUBLIC_INTERFACE
 class ConnectResponse(BaseModel):

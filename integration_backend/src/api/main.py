@@ -1,6 +1,10 @@
-from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi import FastAPI, Depends, HTTPException, status, Request
 from fastapi.middleware.cors import CORSMiddleware
-from typing import List, Dict, Any
+from fastapi.responses import RedirectResponse
+from typing import List, Dict, Any, Optional
+import time
+import urllib.parse
+import httpx
 
 from src.db.config import Base, engine, get_db
 
@@ -12,6 +16,11 @@ from src.db.service import (
     list_jira_projects_for_user,
     upsert_confluence_page,
     list_confluence_pages_for_user,
+)
+from src.api.oauth_config import (
+    get_jira_oauth_config,
+    get_confluence_oauth_config,
+    get_frontend_base_url_default,
 )
 from src.api.schemas import (
     UserCreate,
@@ -31,6 +40,7 @@ openapi_tags = [
     {"name": "JIRA Projects", "description": "Manage synced JIRA projects."},
     {"name": "Confluence Pages", "description": "Manage synced Confluence pages."},
     {"name": "Integrations", "description": "Connect and fetch from JIRA/Confluence (placeholders)."},
+    {"name": "Auth", "description": "OAuth 2.0 authorization flows for Atlassian (Jira/Confluence)."},
 ]
 
 app = FastAPI(
@@ -74,6 +84,128 @@ def health_check():
 
 
 # Users (Public)
+
+# -----------------------
+# OAuth 2.0 for Atlassian - Jira
+# -----------------------
+
+# PUBLIC_INTERFACE
+@app.get(
+    "/auth/jira/login",
+    tags=["Auth"],
+    summary="Start Jira OAuth 2.0 login",
+    description="Redirects the user to Atlassian authorization page. Frontend should open this URL to start the flow.",
+)
+def jira_login(state: Optional[str] = None, scope: Optional[str] = None):
+    """
+    Initiate Jira OAuth 2.0 authorization flow using Atlassian OAuth 2.0 (3LO).
+    Parameters:
+        state: Optional opaque state to be returned by Atlassian to mitigate CSRF (frontend should generate and verify).
+        scope: Optional space-separated scopes. If not provided, defaults to commonly used scopes configured in your app.
+    Returns:
+        Redirect to Atlassian authorization endpoint.
+    """
+    cfg = get_jira_oauth_config()
+    client_id = cfg.get("client_id")
+    redirect_uri = cfg.get("redirect_uri")
+    if not client_id or not redirect_uri:
+        raise HTTPException(status_code=500, detail="Jira OAuth is not configured. Set environment variables.")
+
+    # Default scopes can be tailored based on your app setup in Atlassian developer console
+    default_scopes = [
+        "read:jira-work",
+        "read:jira-user",
+        "offline_access",
+    ]
+    scopes = scope or " ".join(default_scopes)
+
+    authorize_url = "https://auth.atlassian.com/authorize"
+    params = {
+        "audience": "api.atlassian.com",
+        "client_id": client_id,
+        "scope": scopes,
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+        "prompt": "consent",
+    }
+    if state:
+        params["state"] = state
+
+    url = f"{authorize_url}?{urllib.parse.urlencode(params)}"
+    return RedirectResponse(url)
+    
+
+# PUBLIC_INTERFACE
+@app.get(
+    "/auth/jira/callback",
+    tags=["Auth"],
+    summary="Jira OAuth 2.0 callback",
+    description="Handles Atlassian redirect, exchanges code for tokens, stores them on the first user (or targeted later), and redirects back to frontend.",
+)
+async def jira_callback(request: Request, db=Depends(get_db), code: Optional[str] = None, state: Optional[str] = None):
+    """
+    Complete Jira OAuth 2.0 flow:
+    - Exchange authorization code for access and refresh tokens
+    - Store tokens and expiry on a user (demo: first user)
+    - Redirect to frontend with status
+    """
+    if not code:
+        raise HTTPException(status_code=400, detail="Missing authorization code")
+
+    cfg = get_jira_oauth_config()
+    client_id = cfg.get("client_id")
+    client_secret = cfg.get("client_secret")
+    redirect_uri = cfg.get("redirect_uri")
+    if not client_id or not client_secret or not redirect_uri:
+        raise HTTPException(status_code=500, detail="Jira OAuth is not configured. Set environment variables.")
+
+    token_url = "https://auth.atlassian.com/oauth/token"
+    data = {
+        "grant_type": "authorization_code",
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "code": code,
+        "redirect_uri": redirect_uri,
+    }
+
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        token_resp = await client.post(token_url, json=data, headers={"Content-Type": "application/json"})
+        if token_resp.status_code != 200:
+            raise HTTPException(status_code=502, detail=f"Token exchange failed: {token_resp.text}")
+        token_json = token_resp.json()
+
+    access_token = token_json.get("access_token")
+    refresh_token = token_json.get("refresh_token")
+    expires_in = token_json.get("expires_in")  # seconds
+    if not access_token:
+        raise HTTPException(status_code=502, detail="No access token returned by Atlassian")
+
+    # For demo simplicity: store on the first user (or require selecting target later)
+    users = list_users(db)
+    if not users:
+        raise HTTPException(status_code=400, detail="No user found. Create a user first via POST /users.")
+    user = users[0]
+
+    user.jira_token = access_token
+    user.jira_refresh_token = refresh_token
+    user.jira_expires_at = int(time.time()) + int(expires_in or 0)
+    # store base URL if known from env
+    from src.api.oauth_config import get_atlassian_base_url
+    user.jira_base_url = get_atlassian_base_url() or user.jira_base_url
+    db.commit()
+    db.refresh(user)
+
+    # Redirect back to frontend
+    frontend = get_frontend_base_url_default() or "/"
+    # Include minimal status info; avoid exposing tokens
+    params = {
+        "provider": "jira",
+        "status": "success",
+        "state": state or "",
+        "user_id": str(user.id),
+    }
+    redirect_to = f"{frontend.rstrip('/')}/oauth/callback?{urllib.parse.urlencode(params)}"
+    return RedirectResponse(redirect_to)
 # PUBLIC_INTERFACE
 @app.post(
     "/users",
@@ -145,6 +277,116 @@ def get_user_endpoint(user_id: int, db=Depends(get_db)):
 
 # -----------------------
 # Integrations - Connect (Public demo flows)
+
+# -----------------------
+# OAuth 2.0 for Atlassian - Confluence
+# -----------------------
+
+# PUBLIC_INTERFACE
+@app.get(
+    "/auth/confluence/login",
+    tags=["Auth"],
+    summary="Start Confluence OAuth 2.0 login",
+    description="Redirects the user to Atlassian authorization page for Confluence scopes.",
+)
+def confluence_login(state: Optional[str] = None, scope: Optional[str] = None):
+    """
+    Initiate Confluence OAuth 2.0 authorization flow.
+    """
+    cfg = get_confluence_oauth_config()
+    client_id = cfg.get("client_id")
+    redirect_uri = cfg.get("redirect_uri")
+    if not client_id or not redirect_uri:
+        raise HTTPException(status_code=500, detail="Confluence OAuth is not configured. Set environment variables.")
+
+    default_scopes = [
+        "read:confluence-content.all",
+        "read:confluence-space.summary",
+        "offline_access",
+    ]
+    scopes = scope or " ".join(default_scopes)
+
+    authorize_url = "https://auth.atlassian.com/authorize"
+    params = {
+        "audience": "api.atlassian.com",
+        "client_id": client_id,
+        "scope": scopes,
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+        "prompt": "consent",
+    }
+    if state:
+        params["state"] = state
+    url = f"{authorize_url}?{urllib.parse.urlencode(params)}"
+    return RedirectResponse(url)
+
+
+# PUBLIC_INTERFACE
+@app.get(
+    "/auth/confluence/callback",
+    tags=["Auth"],
+    summary="Confluence OAuth 2.0 callback",
+    description="Handles Atlassian redirect, exchanges code for tokens, stores them on the first user, and redirects back to frontend.",
+)
+async def confluence_callback(request: Request, db=Depends(get_db), code: Optional[str] = None, state: Optional[str] = None):
+    """
+    Complete Confluence OAuth 2.0 flow (token exchange and persistence).
+    """
+    if not code:
+        raise HTTPException(status_code=400, detail="Missing authorization code")
+
+    cfg = get_confluence_oauth_config()
+    client_id = cfg.get("client_id")
+    client_secret = cfg.get("client_secret")
+    redirect_uri = cfg.get("redirect_uri")
+    if not client_id or not client_secret or not redirect_uri:
+        raise HTTPException(status_code=500, detail="Confluence OAuth is not configured. Set environment variables.")
+
+    token_url = "https://auth.atlassian.com/oauth/token"
+    data = {
+        "grant_type": "authorization_code",
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "code": code,
+        "redirect_uri": redirect_uri,
+    }
+
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        token_resp = await client.post(token_url, json=data, headers={"Content-Type": "application/json"})
+        if token_resp.status_code != 200:
+            raise HTTPException(status_code=502, detail=f"Token exchange failed: {token_resp.text}")
+        token_json = token_resp.json()
+
+    access_token = token_json.get("access_token")
+    refresh_token = token_json.get("refresh_token")
+    expires_in = token_json.get("expires_in")
+    if not access_token:
+        raise HTTPException(status_code=502, detail="No access token returned by Atlassian")
+
+    users = list_users(db)
+    if not users:
+        raise HTTPException(status_code=400, detail="No user found. Create a user first via POST /users.")
+    user = users[0]
+
+    user.confluence_token = access_token
+    user.confluence_refresh_token = refresh_token
+    user.confluence_expires_at = int(time.time()) + int(expires_in or 0)
+    from src.api.oauth_config import get_atlassian_base_url
+    # Commonly the wiki lives under <base>/wiki
+    base = get_atlassian_base_url()
+    user.confluence_base_url = (base.rstrip("/") + "/wiki") if base else user.confluence_base_url
+    db.commit()
+    db.refresh(user)
+
+    frontend = get_frontend_base_url_default() or "/"
+    params = {
+        "provider": "confluence",
+        "status": "success",
+        "state": state or "",
+        "user_id": str(user.id),
+    }
+    redirect_to = f"{frontend.rstrip('/')}/oauth/callback?{urllib.parse.urlencode(params)}"
+    return RedirectResponse(redirect_to)
 # -----------------------
 
 # PUBLIC_INTERFACE
@@ -153,7 +395,7 @@ def get_user_endpoint(user_id: int, db=Depends(get_db)):
     tags=["Integrations"],
     response_model=ConnectResponse,
     summary="Connect JIRA (auto, no user input)",
-    description="Automatically uses hard-coded credentials to connect to JIRA and store on the target user.",
+    description="Use OAuth 2.0 flow for JIRA. This endpoint now returns guidance to start /auth/jira/login.",
 )
 def connect_jira(db=Depends(get_db), payload: UserCreate | None = None):
     """
@@ -164,14 +406,13 @@ def connect_jira(db=Depends(get_db), payload: UserCreate | None = None):
         ConnectResponse summary of saved settings including optional redirect_url.
     """
     # Lazy import to avoid circulars and keep dependency surface small
-    from src.api.integrations_config import get_jira_credentials
+    # Removed legacy import of hardcoded credentials; OAuth flow is used instead.
 
-    creds = get_jira_credentials()
-    base_url = creds["base_url"]
-    access_token = creds["access_token"]
-
-    if not base_url or not access_token:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="JIRA credentials are not configured")
+    # This demo endpoint no longer persists tokens directly. It guides the client to start OAuth.
+    from src.api.oauth_config import get_atlassian_base_url
+    base_url = get_atlassian_base_url()
+    if not base_url:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Atlassian base URL is not configured")
 
     # For demo simplicity, if payload with email is provided, upsert/get that user; else use first user if any.
     target_user = None
@@ -195,13 +436,13 @@ def connect_jira(db=Depends(get_db), payload: UserCreate | None = None):
             detail="No user available. Create a user first via POST /users (provide an email).",
         )
 
+    # Keep/update user's base_url only; do not set token here.
     target_user.jira_base_url = base_url
-    target_user.jira_token = access_token
     db.commit()
     db.refresh(target_user)
 
-    redirect = f"{base_url}/jira/your-work" if base_url else None
-    return ConnectResponse(provider="jira", base_url=target_user.jira_base_url, connected=True, redirect_url=redirect)
+    redirect = "/auth/jira/login"  # frontend should navigate here to start OAuth
+    return ConnectResponse(provider="jira", base_url=target_user.jira_base_url or "", connected=True, redirect_url=redirect)
 
 
 # PUBLIC_INTERFACE
@@ -210,7 +451,7 @@ def connect_jira(db=Depends(get_db), payload: UserCreate | None = None):
     tags=["Integrations"],
     response_model=ConnectResponse,
     summary="Connect Confluence (auto, no user input)",
-    description="Automatically uses hard-coded credentials to connect to Confluence and store on the target user.",
+    description="Use OAuth 2.0 flow for Confluence. This endpoint now returns guidance to start /auth/confluence/login.",
 )
 def connect_confluence(db=Depends(get_db), payload: UserCreate | None = None):
     """
@@ -220,14 +461,14 @@ def connect_confluence(db=Depends(get_db), payload: UserCreate | None = None):
     Returns:
         ConnectResponse summary of saved settings including optional redirect_url.
     """
-    from src.api.integrations_config import get_confluence_credentials
+    # Removed legacy import of hardcoded credentials; OAuth flow is used instead.
 
-    creds = get_confluence_credentials()
-    base_url = creds["base_url"]
-    access_token = creds["access_token"]
+    from src.api.oauth_config import get_atlassian_base_url
+    base_core = get_atlassian_base_url()
+    base_url = (base_core.rstrip("/") + "/wiki") if base_core else None
 
-    if not base_url or not access_token:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Confluence credentials are not configured")
+    if not base_url:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Atlassian base URL is not configured")
 
     target_user = None
     if payload and payload.email:
@@ -251,12 +492,11 @@ def connect_confluence(db=Depends(get_db), payload: UserCreate | None = None):
         )
 
     target_user.confluence_base_url = base_url
-    target_user.confluence_token = access_token
     db.commit()
     db.refresh(target_user)
 
-    redirect = f"{base_url}/spaces/viewspacesummary.action" if base_url else None
-    return ConnectResponse(provider="confluence", base_url=target_user.confluence_base_url, connected=True, redirect_url=redirect)
+    redirect = "/auth/confluence/login"
+    return ConnectResponse(provider="confluence", base_url=target_user.confluence_base_url or "", connected=True, redirect_url=redirect)
 
 
 # -----------------------

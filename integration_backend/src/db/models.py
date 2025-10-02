@@ -47,6 +47,12 @@ class User(Base, TimestampMixin):
     jira_token: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     confluence_token: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
+    # OAuth refresh tokens and expirations (epoch seconds)
+    jira_refresh_token: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    confluence_refresh_token: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    jira_expires_at: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    confluence_expires_at: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
     jira_base_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     confluence_base_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
 

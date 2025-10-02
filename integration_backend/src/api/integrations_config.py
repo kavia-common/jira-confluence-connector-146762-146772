@@ -1,43 +1,26 @@
 """
 Integration configuration for JIRA and Confluence.
 
-NOTE: This module intentionally hard-codes credentials for demo/integration purposes
-based on the task requirement. In real-world deployments, NEVER hard-code secrets.
-Use environment variables or a secret manager. This file is separate to isolate the
-hard-coded values and make future refactoring easier.
+This module provides backward-compatible helpers but NO hard-coded secrets.
+All sensitive values must be provided via environment variables and handled by oauth_config.
 
-Expose helper getters to keep import usage clean across the codebase.
+Kept for compatibility with earlier imports. Prefer using src.api.oauth_config instead.
 """
-
 from __future__ import annotations
 from typing import Dict
-
-
-# Demo hard-coded credentials and endpoints (replace with real ones in production)
-# For JIRA (example Atlassian Cloud)
-_JIRA_CREDENTIALS: Dict[str, str] = {
-    "base_url": "https://your-company.atlassian.net",
-    "client_id": "demo-jira-client-id",
-    "client_secret": "demo-jira-client-secret",
-    "access_token": "demo-jira-access-token",
-}
-
-# For Confluence (example Atlassian Cloud)
-_CONFLUENCE_CREDENTIALS: Dict[str, str] = {
-    "base_url": "https://your-company.atlassian.net/wiki",
-    "client_id": "demo-confluence-client-id",
-    "client_secret": "demo-confluence-client-secret",
-    "access_token": "demo-confluence-access-token",
-}
+from .oauth_config import get_jira_oauth_config, get_confluence_oauth_config
 
 
 # PUBLIC_INTERFACE
 def get_jira_credentials() -> Dict[str, str]:
-    """Return hard-coded JIRA credentials and base URL."""
-    return dict(_JIRA_CREDENTIALS)
+    """Return JIRA OAuth config (no secrets exposed to logs)."""
+    cfg = get_jira_oauth_config()
+    # Expose only non-sensitive parts in this "credentials" shim
+    return {"base_url": cfg.get("base_url", "")}
 
 
 # PUBLIC_INTERFACE
 def get_confluence_credentials() -> Dict[str, str]:
-    """Return hard-coded Confluence credentials and base URL."""
-    return dict(_CONFLUENCE_CREDENTIALS)
+    """Return Confluence OAuth config (no secrets exposed to logs)."""
+    cfg = get_confluence_oauth_config()
+    return {"base_url": cfg.get("base_url", "")}
