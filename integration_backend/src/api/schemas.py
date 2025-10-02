@@ -1,0 +1,84 @@
+"""
+Pydantic models for API requests and responses.
+"""
+
+from __future__ import annotations
+
+from typing import Optional
+from pydantic import BaseModel, Field, EmailStr
+
+
+# PUBLIC_INTERFACE
+class UserCreate(BaseModel):
+    """Payload to create a user record (demo-only; tokens are optional)."""
+
+    email: EmailStr = Field(..., description="User email (unique).")
+    display_name: Optional[str] = Field(None, description="Display name.")
+    jira_token: Optional[str] = Field(None, description="JIRA access token (demo).")
+    confluence_token: Optional[str] = Field(None, description="Confluence access token (demo).")
+    jira_base_url: Optional[str] = Field(None, description="Base URL for JIRA API.")
+    confluence_base_url: Optional[str] = Field(None, description="Base URL for Confluence API.")
+
+
+# PUBLIC_INTERFACE
+class UserRead(BaseModel):
+    """User response model (tokens omitted for safety)."""
+
+    id: int
+    email: EmailStr
+    display_name: Optional[str]
+
+    class Config:
+        from_attributes = True
+
+
+# PUBLIC_INTERFACE
+class JiraProjectCreate(BaseModel):
+    """Payload to create a JIRA project record for a user."""
+
+    owner_id: int = Field(..., description="User ID who owns the project.")
+    key: str = Field(..., description="JIRA Project key, e.g., 'ABC'.")
+    name: str = Field(..., description="Project name.")
+    lead: Optional[str] = Field(None, description="Project lead.")
+    url: Optional[str] = Field(None, description="Deep link to project.")
+
+
+# PUBLIC_INTERFACE
+class JiraProjectRead(BaseModel):
+    """Response model for JIRA projects."""
+
+    id: int
+    owner_id: int
+    key: str
+    name: str
+    lead: Optional[str]
+    url: Optional[str]
+
+    class Config:
+        from_attributes = True
+
+
+# PUBLIC_INTERFACE
+class ConfluencePageCreate(BaseModel):
+    """Payload to create a Confluence page record for a user."""
+
+    owner_id: int = Field(..., description="User ID who owns the page.")
+    space_key: str = Field(..., description="Confluence space key, e.g., 'ENG'.")
+    page_id: str = Field(..., description="Remote Confluence page ID.")
+    title: str = Field(..., description="Page title.")
+    url: Optional[str] = Field(None, description="Deep link to page.")
+
+
+# PUBLIC_INTERFACE
+class ConfluencePageRead(BaseModel):
+    """Response model for Confluence pages."""
+
+    id: int
+    owner_id: int
+    space_key: str
+    page_id: str
+    title: str
+    url: Optional[str]
+
+    class Config:
+        from_attributes = True
