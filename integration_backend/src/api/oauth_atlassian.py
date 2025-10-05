@@ -20,6 +20,7 @@ from typing import Optional
 import httpx
 from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse, JSONResponse
+from starlette.requests import Request as StarletteRequest
 
 import logging
 
@@ -36,6 +37,85 @@ from .oauth_pkce import SessionData
 from .oauth_settings import get_atlassian_oauth_config, get_default_scopes
 
 router = APIRouter()
+
+# PUBLIC_INTERFACE
+@router.get(
+    "/api/oauth/start",
+    tags=["Auth"],
+    summary="OAuth start shim",
+    description="Redirect shim for legacy clients. Redirects to /api/oauth/atlassian/login, preserving return_url as ?redirect=...",
+)
+async def oauth_start(request: Request):
+    """
+    Start OAuth initiation via a compatibility endpoint.
+
+    Accepts:
+        - return_url (optional): a frontend URL to navigate to after successful auth. It will be embedded
+          into the state via the canonical PKCE start endpoint using the 'redirect' query param.
+
+    Behavior:
+        - Builds a redirect to /api/oauth/atlassian/login and maps return_url -> redirect
+        - Preserves any additional query parameters except return_url (which is remapped)
+        - Returns 307 Temporary Redirect to keep semantics clear
+    """
+    # Base target: canonical PKCE start
+    base_target = "/api/oauth/atlassian/login"
+
+    # Collect existing query params
+    qp = dict(request.query_params)
+    return_url = qp.pop("return_url", None)
+    # Remap to "redirect" for PKCE flow to embed in state
+    if return_url:
+        qp["redirect"] = return_url
+
+    # Reconstruct query string
+    query = urllib.parse.urlencode(qp)
+    dest = base_target if not query else f"{base_target}?{query}"
+
+    # Use 307 to be explicit (though this is a GET)
+    return RedirectResponse(dest, status_code=307)
+
+
+# PUBLIC_INTERFACE
+@router.get(
+    "/routes",
+    tags=["Health"],
+    summary="List registered routes",
+    description="Diagnostic endpoint: lists all registered routes and methods.",
+)
+async def list_routes(request: StarletteRequest):
+    """
+    Enumerate and return all registered routes for diagnostics.
+
+    Returns:
+        List of routes with method(s), path, name, and tags (if available).
+    """
+    app = request.app
+    items = []
+    for r in app.routes:
+        methods = sorted(getattr(r, "methods", []) or [])
+        # Skip head/options duplicates for brevity
+        methods = [m for m in methods if m not in ("HEAD", "OPTIONS")]
+        name = getattr(r, "name", "")
+        path = getattr(r, "path", "")
+        tags = []
+        try:
+            # FastAPI route exposes endpoint and openapi extra where tags may be present
+            r_tags = getattr(r, "tags", None) or []
+            tags = list(r_tags)
+        except Exception:
+            tags = []
+        items.append(
+            {
+                "path": path,
+                "methods": methods,
+                "name": name,
+                "tags": tags,
+            }
+        )
+    # Sort by path then method for readability
+    items.sort(key=lambda x: (x["path"], ",".join(x["methods"])))
+    return JSONResponse(items)
 
 
 def _set_session_cookie(resp: Response, session_id: str) -> None:
