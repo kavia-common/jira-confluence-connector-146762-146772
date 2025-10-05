@@ -30,8 +30,10 @@ Now supports OAuth 2.0 (3LO) for Atlassian (Jira/Confluence) with PKCE:
 3. Create `.env` from example and fill in your values:
    - `cp integration_backend/.env.example integration_backend/.env`
    - Set ATLASSIAN_CLIENT_ID, ATLASSIAN_REDIRECT_URI, FRONTEND_BASE_URL, BACKEND_BASE_URL, BACKEND_CORS_ORIGINS to your cloud preview domains (no localhost).
-4. Run API:
+   - Note: Do NOT use legacy JIRA_OAUTH_* names; PKCE endpoints read ATLASSIAN_* env vars.
+4. Run API (uses src/api/main.py which loads .env at startup):
    - `uvicorn src.api.main:app --reload --port 3001 --app-dir integration_backend`
+   - Diagnostics: GET /api/config to verify hasClientId and hasRedirectUri are true and redirectUri matches Atlassian console exactly.
 5. Generate OpenAPI spec (optional, while API is running is not required):
    - `python -m src.api.generate_openapi` (run from `integration_backend` directory)
 

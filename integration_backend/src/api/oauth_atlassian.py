@@ -318,13 +318,19 @@ async def get_effective_config():
     Return the effective configuration for quick validation.
 
     Returns:
-        JSON with backendBaseUrl, frontendBaseUrl, redirectUri.
+        JSON with backendBaseUrl, frontendBaseUrl, redirectUri and presence flags.
     """
     cfg = get_atlassian_oauth_config()
+    client_id_present = bool(cfg.get("client_id"))
+    redirect_present = bool(cfg.get("redirect_uri"))
+    scopes_present = bool(cfg.get("scopes"))
     return JSONResponse(
         {
             "backendBaseUrl": cfg.get("backend_base_url") or "",
             "frontendBaseUrl": cfg.get("frontend_url") or "",
             "redirectUri": cfg.get("redirect_uri") or "",
+            "hasClientId": client_id_present,
+            "hasRedirectUri": redirect_present,
+            "hasScopes": scopes_present,
         }
     )

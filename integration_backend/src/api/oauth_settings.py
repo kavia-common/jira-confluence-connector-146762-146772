@@ -13,14 +13,19 @@ Required/Optional env vars:
 
 from __future__ import annotations
 
+# Ensure .env is loaded and logging configured before reading env
+from src import startup  # noqa: F401
+
+import logging
 import os
 from typing import List
 
+_logger = logging.getLogger("config.oauth")
 
 # PUBLIC_INTERFACE
 def get_atlassian_oauth_config() -> dict:
     """Return a dict of Atlassian OAuth config from env."""
-    return {
+    cfg = {
         "client_id": os.getenv("ATLASSIAN_CLIENT_ID", "").strip(),
         "client_secret": os.getenv("ATLASSIAN_CLIENT_SECRET", "").strip(),
         # IMPORTANT: Do not derive redirect URI; must exactly equal Atlassian app setting
@@ -30,6 +35,17 @@ def get_atlassian_oauth_config() -> dict:
         "backend_base_url": os.getenv("BACKEND_BASE_URL", "").strip(),
         "frontend_url": os.getenv("FRONTEND_BASE_URL", "").strip(),
     }
+    # Log effective non-sensitive fields to help diagnose configuration at startup/use
+    redacted_client = (cfg["client_id"][:4] + "...") if cfg["client_id"] else ""
+    _logger.info(
+        "OAuth config loaded: client_id=%s, redirect_uri=%s, scopes_set=%s, backend_base=%s, frontend_base=%s",
+        redacted_client,
+        cfg["redirect_uri"],
+        bool(cfg["scopes"]),
+        cfg["backend_base_url"],
+        cfg["frontend_url"],
+    )
+    return cfg
 
 
 # PUBLIC_INTERFACE

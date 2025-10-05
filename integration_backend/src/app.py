@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-import os
+# Load .env and configure logging as early as possible
+from src import startup  # noqa: F401
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from api.oauth_settings import get_cors_origins
-from api import oauth_atlassian as oauth_router
-from api import health as health_router
+from src.api.oauth_settings import get_cors_origins
+from src.api import oauth_atlassian as oauth_router
+from src.api import health as health_router
 
 openapi_tags = [
     {"name": "Health", "description": "Health and readiness checks."},
