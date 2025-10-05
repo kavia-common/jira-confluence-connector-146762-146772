@@ -41,6 +41,36 @@ from .oauth_config import (
 
 router = APIRouter()
 
+# PUBLIC_INTERFACE
+@router.get(
+    "/api/auth/jira/login",
+    tags=["Auth"],
+    summary="Alias: Start Jira OAuth (API-prefixed)",
+    description="Compatibility alias that redirects to /auth/jira/login. Preserves state, scope, and return_url (as state embedding).",
+)
+async def jira_login_alias(request: Request, state: Optional[str] = None, scope: Optional[str] = None, return_url: Optional[str] = None):
+    """
+    Compatibility alias for clients expecting /api/auth/jira/login.
+    Redirects to /auth/jira/login, preserving query params.
+    """
+    # Build destination URL preserving supported params
+    params = {}
+    if state:
+        params["state"] = state
+    if scope:
+        params["scope"] = scope
+    # Preserve return_url as state suffix for clients that rely on it
+    # If both state and return_url present, append to state.
+    if return_url:
+        if "state" in params and params["state"]:
+            params["state"] = f"{params['state']}|post_redirect={urllib.parse.quote_plus(return_url)}"
+        else:
+            params["state"] = f"post_redirect={urllib.parse.quote_plus(return_url)}"
+    dest = "/auth/jira/login"
+    if params:
+        dest = f"{dest}?{urllib.parse.urlencode(params)}"
+    return RedirectResponse(dest, status_code=307)
+
 
 def _set_session_cookie(resp: Response, session_id: str) -> None:
     # For dev, Secure=True may be ignored if not HTTPS; leave as True to align with best practice.
