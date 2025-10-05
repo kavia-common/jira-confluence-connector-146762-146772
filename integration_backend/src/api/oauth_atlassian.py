@@ -126,16 +126,82 @@ async def atlassian_login(request: Request, state: Optional[str] = None, scope: 
 
     # Log key parts (no secrets)
     logger.info(
-        "Constructed Atlassian authorize URL with client_id=%s, redirect_uri=%s, scopes=%s, has_state=%s",
+        "OAuth start: incoming host=%s path=%s query=%s",
+        request.headers.get("host", ""),
+        request.url.path,
+        str(request.url.query),
+    )
+    logger.info(
+        "Constructed Atlassian authorize URL with client_id=%s, redirect_uri=%s, scopes=%s, has_state=%s, redirecting_to_auth=%s",
         client_id[:4] + "..." if client_id else "",
         redirect_uri,
         scopes,
         bool(embedded_state),
+        authorize_url,
     )
 
     resp = RedirectResponse(url)
     _set_session_cookie(resp, session_id)
     return resp
+
+# PUBLIC_INTERFACE
+@router.get(
+    "/api/oauth/start",
+    tags=["Auth"],
+    summary="OAuth start shim",
+    description="Redirect shim for legacy clients. Redirects to /api/oauth/atlassian/login, preserving return_url as ?redirect=...",
+)
+async def oauth_start(request: Request):
+    """
+    Shim endpoint to support legacy clients that call /api/oauth/start.
+
+    Query:
+        redirect: optional post-auth UI target (preferred)
+        return_url: optional alias for redirect for backward compatibility
+
+    Returns:
+        307 Temporary Redirect to /api/oauth/atlassian/login with redirect preserved.
+    """
+    # Normalize redirect
+    redirect_param = request.query_params.get("redirect")
+    return_url_param = request.query_params.get("return_url")
+    final_redirect = redirect_param or return_url_param
+
+    # Build destination preserving redirect if available
+    dest = "/api/oauth/atlassian/login"
+    if final_redirect:
+        dest = f"{dest}?redirect={urllib.parse.quote_plus(final_redirect)}"
+
+    # Use 307 to preserve method semantics even though this is GET
+    response = RedirectResponse(dest, status_code=307)
+    return response
+
+
+# PUBLIC_INTERFACE
+@router.get(
+    "/routes",
+    tags=["Health"],
+    summary="List registered routes",
+    description="Diagnostic endpoint: lists all registered routes and methods.",
+)
+async def list_routes(request: Request):
+    """
+    Return a list of registered routes and their methods for diagnostics.
+
+    Returns:
+        JSON list of objects: {path, methods, name}
+    """
+    app = request.app
+    items = []
+    for r in app.routes:
+        try:
+            path = getattr(r, "path", "")
+            name = getattr(r, "name", "")
+            methods = sorted(list(getattr(r, "methods", set()))) if hasattr(r, "methods") else []
+            items.append({"path": path, "methods": methods, "name": name})
+        except Exception:
+            continue
+    return JSONResponse(items)
 
 
 # PUBLIC_INTERFACE
