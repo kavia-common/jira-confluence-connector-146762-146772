@@ -1,6 +1,6 @@
 from fastapi import FastAPI, Depends, HTTPException, status, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, JSONResponse
 from typing import List, Dict, Any, Optional
 import time
 import urllib.parse
@@ -88,6 +88,47 @@ def health_check():
 
 # Mount new OAuth router for PKCE flow
 app.include_router(atlassian_oauth_router)
+
+# PUBLIC_INTERFACE
+@app.get(
+    "/routes",
+    tags=["Health"],
+    summary="List registered routes",
+    description="Diagnostic endpoint: lists all registered routes and methods.",
+)
+def list_routes() -> List[dict]:
+    """Return all registered routes for diagnostics."""
+    routes = []
+    for r in app.routes:
+        try:
+            path = getattr(r, "path", "")
+            methods = sorted(list(getattr(r, "methods", set())))
+            name = getattr(r, "name", "")
+            routes.append({"path": path, "methods": methods, "name": name})
+        except Exception:
+            continue
+    return routes
+
+# PUBLIC_INTERFACE
+@app.get(
+    "/auth",
+    tags=["Auth"],
+    summary="Auth routes index",
+    description="Minimal index listing available auth endpoints.",
+)
+def auth_index():
+    """Provide a simple index of auth-related endpoints for quick verification."""
+    return JSONResponse(
+        {
+            "auth_routes": [
+                "/auth/jira/login",
+                "/api/oauth/atlassian/login",
+                "/api/oauth/callback/atlassian",
+                "/api/oauth/atlassian/refresh",
+                "/api/atlassian/resources",
+            ]
+        }
+    )
 
 # Users (Public)
 
