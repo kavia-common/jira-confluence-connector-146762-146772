@@ -58,4 +58,4 @@ def get_confluence_oauth_config() -> Dict[str, str]:
 # PUBLIC_INTERFACE
 def get_frontend_base_url_default() -> str:
     """Return frontend base URL to guide redirects after auth."""
-    return os.getenv("FRONTEND_BASE_URL", "").strip()
+    return os.getenv("APP_FRONTEND_URL", "").strip()

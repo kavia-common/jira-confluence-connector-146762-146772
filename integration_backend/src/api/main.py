@@ -33,8 +33,6 @@ from src.api.schemas import (
     JiraProjectsFetchResponse,
     ConfluencePagesFetchResponse,
 )
-from src.api.oauth_settings import get_cors_origins
-from src.api.oauth_atlassian import router as atlassian_oauth_router
 
 openapi_tags = [
     {"name": "Health", "description": "Health and readiness checks."},
@@ -52,10 +50,9 @@ app = FastAPI(
     openapi_tags=openapi_tags,
 )
 
-# CORS configured via env
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=get_cors_origins(),
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -85,9 +82,6 @@ def health_check():
     """
     return _ocean_response({"service": "integration_backend", "health": "healthy"}, "service healthy")
 
-
-# Mount new OAuth router for PKCE flow
-app.include_router(atlassian_oauth_router)
 
 # Users (Public)
 

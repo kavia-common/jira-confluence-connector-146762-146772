@@ -7,16 +7,11 @@ This backend includes a lightweight SQLAlchemy-based persistence layer using SQL
 - Default: `sqlite:///./integration.db` created in the backend working directory.
 - Tables are auto-created at startup for demo/demo purposes.
 
-Now supports OAuth 2.0 (3LO) for Atlassian (Jira/Confluence) with PKCE:
+Now supports OAuth 2.0 (3LO) for Atlassian (Jira/Confluence):
 - Configure OAuth via environment variables (see `integration_backend/.env.example`).
-- New endpoints (PKCE-based):
-  - GET /api/oauth/atlassian/login -> redirects to Atlassian authorization with PKCE
-  - GET /api/oauth/callback/atlassian -> handles token exchange using PKCE, stores tokens in a server session
-  - POST /api/oauth/atlassian/refresh -> refresh access token using refresh_token
-  - GET /api/atlassian/resources -> lists accessible resources (Cloud IDs) with the session access_token
-- Legacy endpoints (remain available):
-  - GET /auth/jira/login
-  - GET /auth/jira/callback
+- New endpoints:
+  - GET /auth/jira/login -> redirects to Atlassian authorization
+  - GET /auth/jira/callback -> handles token exchange and stores tokens on the user
   - GET /auth/confluence/login
   - GET /auth/confluence/callback
 - Existing connect endpoints now guide the UI to start the OAuth flow instead of storing tokens directly.
@@ -29,11 +24,9 @@ Now supports OAuth 2.0 (3LO) for Atlassian (Jira/Confluence) with PKCE:
    - `pip install -r integration_backend/requirements.txt`
 3. Create `.env` from example and fill in your values:
    - `cp integration_backend/.env.example integration_backend/.env`
-   - Set ATLASSIAN_CLIENT_ID, ATLASSIAN_REDIRECT_URI, FRONTEND_BASE_URL, BACKEND_BASE_URL, BACKEND_CORS_ORIGINS to your cloud preview domains (no localhost).
-   - Note: Do NOT use legacy JIRA_OAUTH_* names; PKCE endpoints read ATLASSIAN_* env vars.
-4. Run API (uses src/api/main.py which loads .env at startup):
+   - Set ATLASSIAN_CLOUD_BASE_URL, JIRA_OAUTH_CLIENT_ID/SECRET/REDIRECT_URI, APP_FRONTEND_URL, etc.
+4. Run API:
    - `uvicorn src.api.main:app --reload --port 3001 --app-dir integration_backend`
-   - Diagnostics: GET /api/config to verify hasClientId and hasRedirectUri are true and redirectUri matches Atlassian console exactly.
 5. Generate OpenAPI spec (optional, while API is running is not required):
    - `python -m src.api.generate_openapi` (run from `integration_backend` directory)
 
@@ -52,53 +45,42 @@ Now supports OAuth 2.0 (3LO) for Atlassian (Jira/Confluence) with PKCE:
 - Data operations:
   - POST /jira/projects, GET /jira/projects/{owner_id}
   - POST /confluence/pages, GET /confluence/pages/{owner_id}
-- OAuth (PKCE):
-  - GET /api/oauth/atlassian/login -> redirect to Atlassian with PKCE
-  - GET /api/oauth/callback/atlassian -> exchange code using code_verifier
-  - POST /api/oauth/atlassian/refresh -> refresh access token
-  - GET /api/atlassian/resources -> verify connection (accessible resources)
+- OAuth:
+  - GET /auth/jira/login -> redirect to Atlassian
+  - GET /auth/jira/callback -> exchange code; persists tokens on first user (demo)
+  - GET /auth/confluence/login
+  - GET /auth/confluence/callback
 
-### OAuth 2.0 Configuration (Atlassian, PKCE)
-Set the following environment variables (see `integration_backend/.env.example`):
-- ATLASSIAN_CLIENT_ID (required)
-- ATLASSIAN_CLIENT_SECRET (optional; if set it will be sent for token/refresh)
-- ATLASSIAN_REDIRECT_URI (required; e.g., http://localhost:3001/api/oauth/callback/atlassian — must exactly match Atlassian console)
-- ATLASSIAN_SCOPES (optional; space-separated; default covers Jira+Confluence read + offline_access)
-- APP_BASE_URL (optional)
-- APP_FRONTEND_URL (optional; e.g., http://localhost:3000 for success redirect)
-- BACKEND_CORS_ORIGINS (optional; comma-separated origins; default "*")
+### OAuth 2.0 Configuration (Atlassian)
+Set the following environment variables (see `.env.example`):
+- ATLASSIAN_CLOUD_BASE_URL: e.g., https://your-team.atlassian.net
+- JIRA_OAUTH_CLIENT_ID, JIRA_OAUTH_CLIENT_SECRET
+- JIRA_OAUTH_REDIRECT_URI: e.g., https://yourapp.com/api/auth/jira/callback
+- Optional for Confluence if using separate app:
+  - CONFLUENCE_OAUTH_CLIENT_ID, CONFLUENCE_OAUTH_CLIENT_SECRET
+  - CONFLUENCE_OAUTH_REDIRECT_URI
+- APP_FRONTEND_URL: e.g., http://localhost:3000 — used to redirect users after successful auth
 
 Scopes:
-- Example default: read:jira-work read:jira-user read:confluence-content.all read:confluence-space.summary offline_access
-
-### Health endpoint
-- GET / -> returns a simple JSON stating the backend is healthy. Useful for verifying your cloud preview URL.
-
-### Cloud preview URL setup
-- Set environment variables in integration_backend/.env:
-  - BACKEND_BASE_URL=https://<your-backend-preview-domain>
-  - FRONTEND_BASE_URL=https://<your-frontend-preview-domain>
-  - ATLASSIAN_REDIRECT_URI must be exactly https://<your-backend-preview-domain>/api/oauth/callback/atlassian
-  - BACKEND_CORS_ORIGINS should include https://<your-frontend-preview-domain>
-- On the frontend, set NEXT_PUBLIC_BACKEND_URL=https://<your-backend-preview-domain>
+- Jira example: read:jira-work read:jira-user offline_access
+- Confluence example: read:confluence-content.all read:confluence-space.summary offline_access
+Configure scopes on Atlassian Developer Console for your app.
 
 ### Frontend integration notes
-- The login button should navigate the browser to GET /api/oauth/atlassian/login (full-page redirect).
-- After Atlassian redirects back to the backend callback, the backend will:
-  - Validate state and complete the PKCE token exchange
-  - Store access_token, refresh_token, and expiration in a server session (httpOnly cookie)
-  - Redirect to APP_FRONTEND_URL (default "/connected")
-- Your frontend can call `GET /api/atlassian/resources` (credentials: include) to verify and show accessible Cloud IDs.
-
-### Security notes
-- This implementation uses an in-memory session store for demo simplicity. Replace with Redis or persistent storage for production.
-- Ensure HTTPS so Secure cookies are respected.
-- Do NOT hardcode client secrets or tokens. Use environment variables or a secret manager.
-- The redirect_uri must exactly match the value configured in the Atlassian developer console.
+- The "Connect Now" button for Jira should initiate a request to POST /integrations/jira/connect and then follow the redirect_url returned ("/auth/jira/login").
+  Alternatively, the button can directly open GET /auth/jira/login.
+- Confluence connect is analogous ("/auth/confluence/login").
+- After Atlassian redirects back to our backend callbacks, the backend will:
+  - Exchange authorization code for tokens
+  - Store access_token, refresh_token, and expiration on the first user (demo simplification)
+  - Redirect to APP_FRONTEND_URL + "/oauth/callback?provider=<jira|confluence>&status=success&user_id=<id>&state=<optional>"
+- Your frontend should implement a route (/oauth/callback) to read these query params and update UI state — e.g., mark the provider as "Connected".
+- For CSRF mitigation, you can generate a state string on the frontend and pass it to /auth/*/login via ?state=..., and validate on your own after redirection.
 
 ### Important notes
+- Do NOT hardcode client secrets or tokens. Use environment variables or a secret manager.
 - For production:
   - Store secrets securely (KMS/Secret Manager), and encrypt sensitive fields at rest.
-  - Replace the demo "first user" selection with real user context where applicable.
-  - Implement periodic token refresh using Atlassian "refresh_token" before expiry.
-  - Tighten CORS to specific trusted origins.
+  - Replace the demo "first user" selection with real user context (e.g., session or JWT).
+  - Implement state verification for OAuth flows.
+  - Implement token refresh using Atlassian "refresh_token" before expiry.
