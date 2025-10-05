@@ -6,8 +6,8 @@ Required/Optional env vars:
 - ATLASSIAN_CLIENT_SECRET (optional; Atlassian accepts PKCE-only, but include if configured)
 - ATLASSIAN_REDIRECT_URI (required; must exactly match Atlassian app setting)
 - ATLASSIAN_SCOPES (optional; space-separated; fallback to defaults)
-- APP_BASE_URL (optional; used for constructing absolute URLs if needed)
-- APP_FRONTEND_URL (optional; where to redirect after success)
+- BACKEND_BASE_URL (recommended; absolute public URL for backend in cloud previews)
+- FRONTEND_BASE_URL (recommended; absolute public URL for frontend in cloud previews)
 - BACKEND_CORS_ORIGINS (optional; comma-separated origins for CORS)
 """
 
@@ -23,10 +23,12 @@ def get_atlassian_oauth_config() -> dict:
     return {
         "client_id": os.getenv("ATLASSIAN_CLIENT_ID", "").strip(),
         "client_secret": os.getenv("ATLASSIAN_CLIENT_SECRET", "").strip(),
+        # IMPORTANT: Do not derive redirect URI; must exactly equal Atlassian app setting
         "redirect_uri": os.getenv("ATLASSIAN_REDIRECT_URI", "").strip(),
         "scopes": os.getenv("ATLASSIAN_SCOPES", "").strip(),
-        "app_base_url": os.getenv("APP_BASE_URL", "").strip(),
-        "frontend_url": os.getenv("APP_FRONTEND_URL", "").strip(),
+        # Public URLs for this deployment (used only for final UI redirects or docs)
+        "backend_base_url": os.getenv("BACKEND_BASE_URL", "").strip(),
+        "frontend_url": os.getenv("FRONTEND_BASE_URL", "").strip(),
     }
 
 
@@ -46,10 +48,11 @@ def get_default_scopes() -> str:
 
 # PUBLIC_INTERFACE
 def get_cors_origins() -> List[str]:
-    """Parse BACKEND_CORS_ORIGINS env var into list of origins."""
+    """Parse BACKEND_CORS_ORIGINS env var into list of origins for CORS."""
     raw = os.getenv("BACKEND_CORS_ORIGINS", "")
     origins = [o.strip() for o in raw.split(",") if o.strip()]
     if not origins:
-        # permissive for dev; adjust for production
+        # Explicitly avoid localhost defaults; require env to be set in cloud
+        # Fallback to '*' only for unrestricted previews. Prefer setting BACKEND_CORS_ORIGINS.
         origins = ["*"]
     return origins

@@ -63,6 +63,8 @@ async def atlassian_login(request: Request, state: Optional[str] = None, scope: 
     Query:
         state: optional caller-provided state; otherwise generated server-side.
         scope: optional space-separated scopes; falls back to env defaults.
+        Note: Any 'redirect' query from the frontend is NOT used for Atlassian redirect_uri and will only be used
+        for post-callback UI navigation via state embedding.
 
     Returns:
         302 redirect to Atlassian authorize endpoint with PKCE params.
@@ -73,6 +75,9 @@ async def atlassian_login(request: Request, state: Optional[str] = None, scope: 
     if not client_id or not redirect_uri:
         raise HTTPException(status_code=500, detail="Atlassian OAuth not configured. Set ATLASSIAN_CLIENT_ID and ATLASSIAN_REDIRECT_URI.")
 
+    # Optional UI redirect after successful callback, captured from query but not sent to Atlassian
+    post_redirect = request.query_params.get("redirect")
+
     # PKCE + state
     code_verifier = generate_code_verifier()
     code_challenge = generate_code_challenge(code_verifier)
@@ -81,19 +86,25 @@ async def atlassian_login(request: Request, state: Optional[str] = None, scope: 
     # Persist in in-memory session
     existing_sid = request.cookies.get("sid")
     session_id = get_or_create_session_id(existing_sid)
+    # Store state, verifier; post_redirect is also saved by embedding into state (URL encoded) to avoid extra storage
     save_session(session_id, SessionData(state=csrf_state, code_verifier=code_verifier, token_set=None))
+
+    # To carry post_redirect through the round-trip, embed it into the state as 'state|post_redirect=<urlencoded>'
+    embedded_state = csrf_state
+    if post_redirect:
+        embedded_state = f"{csrf_state}|post_redirect={urllib.parse.quote_plus(post_redirect)}"
 
     # Scopes
     scopes = scope or cfg.get("scopes") or get_default_scopes()
 
-    # Build authorize URL
+    # Build authorize URL using exact env redirect_uri
     authorize_url = "https://auth.atlassian.com/authorize"
     params = {
         "audience": "api.atlassian.com",
         "client_id": client_id,
         "scope": scopes,
         "redirect_uri": redirect_uri,
-        "state": csrf_state,
+        "state": embedded_state,
         "response_type": "code",
         "prompt": "consent",
         "code_challenge": code_challenge,
@@ -118,7 +129,7 @@ async def atlassian_callback(request: Request, code: Optional[str] = None, state
 
     On success:
         - tokens are saved server-side under session
-        - user is redirected to frontend: /connected or configurable page
+        - user is redirected to FRONTEND_BASE_URL or an embedded post_redirect from the original state
     """
     if not code:
         raise HTTPException(status_code=400, detail="Missing authorization code")
@@ -127,7 +138,7 @@ async def atlassian_callback(request: Request, code: Optional[str] = None, state
     client_id = cfg.get("client_id")
     client_secret = cfg.get("client_secret") or None  # optional
     redirect_uri = cfg.get("redirect_uri")
-    frontend_url = cfg.get("frontend_url") or "/connected"
+    frontend_base = cfg.get("frontend_url") or "/connected"
 
     if not client_id or not redirect_uri:
         raise HTTPException(status_code=500, detail="Atlassian OAuth not configured properly.")
@@ -137,9 +148,17 @@ async def atlassian_callback(request: Request, code: Optional[str] = None, state
     if not sess or not sess.state or not sess.code_verifier:
         raise HTTPException(status_code=400, detail="Session not found or expired. Please restart login.")
 
-    # Validate state
-    if not state or state != sess.state:
+    # Validate state and optionally extract post_redirect that was embedded
+    # Expected format: "<csrf_state>" or "<csrf_state>|post_redirect=<urlencoded>"
+    if not state or not state.startswith(sess.state):
         raise HTTPException(status_code=400, detail="Invalid state. Please retry login.")
+    post_redirect = None
+    if "|post_redirect=" in state:
+        try:
+            post_redirect_enc = state.split("|post_redirect=", 1)[1]
+            post_redirect = urllib.parse.unquote_plus(post_redirect_enc)
+        except Exception:
+            post_redirect = None
 
     # Exchange code for tokens
     token_url = "https://auth.atlassian.com/oauth/token"
@@ -163,11 +182,10 @@ async def atlassian_callback(request: Request, code: Optional[str] = None, state
     # Persist tokens in session
     save_tokens(session_id, token_json)
 
-    # Redirect to frontend success page
-    # Allow appending query marks for simple verification
+    # Redirect to frontend success page (prefer embedded post_redirect if provided)
+    base_dest = post_redirect or frontend_base or "/"
     params = {"provider": "atlassian", "status": "success"}
-    dest = f"{(frontend_url or '/').rstrip('/')}"
-    # If frontend_url already includes query we append with '&'
+    dest = f"{base_dest.rstrip('/')}"
     if "?" in dest:
         dest = f"{dest}&provider=atlassian&status=success"
     else:

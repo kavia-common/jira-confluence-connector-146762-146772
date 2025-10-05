@@ -14,10 +14,10 @@ How it works:
 Environment variables:
 - ATLASSIAN_CLIENT_ID (required)
 - ATLASSIAN_CLIENT_SECRET (optional)
-- ATLASSIAN_REDIRECT_URI (required; must match Atlassian console)
+- ATLASSIAN_REDIRECT_URI (required; must match Atlassian console, e.g. https://<backend>/api/oauth/callback/atlassian)
 - ATLASSIAN_SCOPES (optional; space-separated)
-- APP_FRONTEND_URL (optional)
-- BACKEND_CORS_ORIGINS (optional; comma-separated)
+- FRONTEND_BASE_URL (optional; absolute frontend URL for post-auth redirect)
+- BACKEND_CORS_ORIGINS (optional; comma-separated; include your frontend origin)
 
 Security notes:
 - This demo uses an in-memory session store. Replace with Redis for production.

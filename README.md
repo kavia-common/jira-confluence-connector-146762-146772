@@ -29,7 +29,7 @@ Now supports OAuth 2.0 (3LO) for Atlassian (Jira/Confluence) with PKCE:
    - `pip install -r integration_backend/requirements.txt`
 3. Create `.env` from example and fill in your values:
    - `cp integration_backend/.env.example integration_backend/.env`
-   - Set ATLASSIAN_CLIENT_ID, ATLASSIAN_REDIRECT_URI, APP_FRONTEND_URL, BACKEND_CORS_ORIGINS, etc.
+   - Set ATLASSIAN_CLIENT_ID, ATLASSIAN_REDIRECT_URI, FRONTEND_BASE_URL, BACKEND_BASE_URL, BACKEND_CORS_ORIGINS to your cloud preview domains (no localhost).
 4. Run API:
    - `uvicorn src.api.main:app --reload --port 3001 --app-dir integration_backend`
 5. Generate OpenAPI spec (optional, while API is running is not required):
@@ -68,6 +68,17 @@ Set the following environment variables (see `integration_backend/.env.example`)
 
 Scopes:
 - Example default: read:jira-work read:jira-user read:confluence-content.all read:confluence-space.summary offline_access
+
+### Health endpoint
+- GET / -> returns a simple JSON stating the backend is healthy. Useful for verifying your cloud preview URL.
+
+### Cloud preview URL setup
+- Set environment variables in integration_backend/.env:
+  - BACKEND_BASE_URL=https://<your-backend-preview-domain>
+  - FRONTEND_BASE_URL=https://<your-frontend-preview-domain>
+  - ATLASSIAN_REDIRECT_URI must be exactly https://<your-backend-preview-domain>/api/oauth/callback/atlassian
+  - BACKEND_CORS_ORIGINS should include https://<your-frontend-preview-domain>
+- On the frontend, set NEXT_PUBLIC_BACKEND_URL=https://<your-backend-preview-domain>
 
 ### Frontend integration notes
 - The login button should navigate the browser to GET /api/oauth/atlassian/login (full-page redirect).
