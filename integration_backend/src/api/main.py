@@ -35,6 +35,8 @@ from src.api.schemas import (
 )
 from src.api.oauth_settings import get_cors_origins
 from src.api.oauth_atlassian import router as atlassian_oauth_router
+from fastapi.responses import JSONResponse
+from starlette.requests import Request as StarletteRequest
 
 openapi_tags = [
     {"name": "Health", "description": "Health and readiness checks."},
@@ -89,6 +91,44 @@ def health_check():
 # Mount new OAuth router for PKCE flow
 app.include_router(atlassian_oauth_router)
 
+# PUBLIC_INTERFACE
+@app.get(
+    "/routes",
+    tags=["Health"],
+    summary="List registered routes",
+    description="Diagnostic endpoint: lists all registered routes and methods.",
+)
+def list_routes(request: StarletteRequest):
+    """
+    Enumerate and return all registered routes for diagnostics.
+
+    Returns:
+        List of routes with method(s), path, name, and tags (if available).
+    """
+    app_obj = request.app
+    items = []
+    for r in app_obj.routes:
+        methods = sorted(getattr(r, "methods", []) or [])
+        methods = [m for m in methods if m not in ("HEAD", "OPTIONS")]
+        name = getattr(r, "name", "")
+        path = getattr(r, "path", "")
+        tags = []
+        try:
+            r_tags = getattr(r, "tags", None) or []
+            tags = list(r_tags)
+        except Exception:
+            tags = []
+        items.append(
+            {
+                "path": path,
+                "methods": methods,
+                "name": name,
+                "tags": tags,
+            }
+        )
+    items.sort(key=lambda x: (x["path"], ",".join(x["methods"])))
+    return JSONResponse(items)
+
 # Users (Public)
 
 # -----------------------
@@ -111,6 +151,10 @@ def jira_login(state: Optional[str] = None, scope: Optional[str] = None):
     Returns:
         Redirect to Atlassian authorization endpoint.
     """
+    # Legacy shim: if PKCE router is active, prefer redirecting to it so PKCE flow is used.
+    # This preserves backward compatibility where the UI hit /auth/jira/login on this app.
+    return RedirectResponse(url="/api/oauth/atlassian/login", status_code=302)
+
     cfg = get_jira_oauth_config()
     client_id = cfg.get("client_id")
     redirect_uri = cfg.get("redirect_uri")

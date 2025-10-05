@@ -75,6 +75,21 @@ async def oauth_start(request: Request):
     # Use 307 to be explicit (though this is a GET)
     return RedirectResponse(dest, status_code=307)
 
+# PUBLIC_INTERFACE
+@router.get(
+    "/auth/jira/login",
+    tags=["Auth"],
+    summary="Start Jira OAuth (legacy shim)",
+    description="Legacy shim that redirects to the PKCE start endpoint at /api/oauth/atlassian/login.",
+)
+async def legacy_jira_login_shim():
+    """
+    Backward-compatible shim to start Jira OAuth:
+    Returns:
+        302 redirect to /api/oauth/atlassian/login
+    """
+    return RedirectResponse("/api/oauth/atlassian/login", status_code=302)
+
 
 # PUBLIC_INTERFACE
 @router.get(
