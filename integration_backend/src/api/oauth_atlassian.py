@@ -21,6 +21,8 @@ import httpx
 from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse, JSONResponse
 
+import logging
+
 from .oauth_pkce import (
     generate_code_verifier,
     generate_code_challenge,
@@ -69,11 +71,21 @@ async def atlassian_login(request: Request, state: Optional[str] = None, scope: 
     Returns:
         302 redirect to Atlassian authorize endpoint with PKCE params.
     """
+    logger = logging.getLogger("oauth.atlassian")
     cfg = get_atlassian_oauth_config()
     client_id = cfg.get("client_id")
     redirect_uri = cfg.get("redirect_uri")
+    backend_base = cfg.get("backend_base_url")
     if not client_id or not redirect_uri:
         raise HTTPException(status_code=500, detail="Atlassian OAuth not configured. Set ATLASSIAN_CLIENT_ID and ATLASSIAN_REDIRECT_URI.")
+
+    # Warn if request host is localhost but backend base is configured as cloud URL
+    req_host = request.headers.get("host", "")
+    if "localhost" in req_host.lower() and backend_base and "localhost" not in backend_base.lower():
+        logger.warning(
+            "Login requested via localhost host header while BACKEND_BASE_URL is cloud (%s). Proceeding with env-based redirect_uri.",
+            backend_base,
+        )
 
     # Optional UI redirect after successful callback, captured from query but not sent to Atlassian
     post_redirect = request.query_params.get("redirect")
@@ -86,10 +98,10 @@ async def atlassian_login(request: Request, state: Optional[str] = None, scope: 
     # Persist in in-memory session
     existing_sid = request.cookies.get("sid")
     session_id = get_or_create_session_id(existing_sid)
-    # Store state, verifier; post_redirect is also saved by embedding into state (URL encoded) to avoid extra storage
+    # Store state, verifier
     save_session(session_id, SessionData(state=csrf_state, code_verifier=code_verifier, token_set=None))
 
-    # To carry post_redirect through the round-trip, embed it into the state as 'state|post_redirect=<urlencoded>'
+    # Embed post_redirect into state to preserve across round-trip. Ignore any attempt to override redirect_uri via query.
     embedded_state = csrf_state
     if post_redirect:
         embedded_state = f"{csrf_state}|post_redirect={urllib.parse.quote_plus(post_redirect)}"
@@ -97,7 +109,7 @@ async def atlassian_login(request: Request, state: Optional[str] = None, scope: 
     # Scopes
     scopes = scope or cfg.get("scopes") or get_default_scopes()
 
-    # Build authorize URL using exact env redirect_uri
+    # Build authorize URL using exact env redirect_uri (never overridden)
     authorize_url = "https://auth.atlassian.com/authorize"
     params = {
         "audience": "api.atlassian.com",
@@ -111,6 +123,16 @@ async def atlassian_login(request: Request, state: Optional[str] = None, scope: 
         "code_challenge_method": "S256",
     }
     url = f"{authorize_url}?{urllib.parse.urlencode(params)}"
+
+    # Log key parts (no secrets)
+    logger.info(
+        "Constructed Atlassian authorize URL with client_id=%s, redirect_uri=%s, scopes=%s, has_state=%s",
+        client_id[:4] + "..." if client_id else "",
+        redirect_uri,
+        scopes,
+        bool(embedded_state),
+    )
+
     resp = RedirectResponse(url)
     _set_session_cookie(resp, session_id)
     return resp
@@ -281,3 +303,28 @@ async def list_accessible_resources(request: Request):
         items = resp.json()
 
     return JSONResponse({"status": "success", "message": "ok", "data": items})
+
+
+# PUBLIC_INTERFACE
+@router.get(
+    "/api/config",
+    tags=["Health"],
+    summary="Effective configuration (base URLs and redirect URI)",
+    description="Returns the effective public URLs and Atlassian redirect URI sourced from environment for diagnostics. Secrets are not included.",
+    responses={200: {"description": "Successful Response"}},
+)
+async def get_effective_config():
+    """
+    Return the effective configuration for quick validation.
+
+    Returns:
+        JSON with backendBaseUrl, frontendBaseUrl, redirectUri.
+    """
+    cfg = get_atlassian_oauth_config()
+    return JSONResponse(
+        {
+            "backendBaseUrl": cfg.get("backend_base_url") or "",
+            "frontendBaseUrl": cfg.get("frontend_url") or "",
+            "redirectUri": cfg.get("redirect_uri") or "",
+        }
+    )
