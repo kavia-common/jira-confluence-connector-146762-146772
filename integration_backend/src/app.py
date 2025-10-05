@@ -5,6 +5,7 @@ from src import startup  # noqa: F401
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+import logging
 
 from src.api.oauth_settings import get_cors_origins
 from src.api import oauth_atlassian as oauth_router
@@ -43,6 +44,7 @@ def create_app() -> FastAPI:
     app.include_router(health_router.router)
     app.include_router(oauth_router.router)
 
+    logging.getLogger("startup").info("App created via src.app:create_app; routers mounted. Visit GET /routes for route list.")
     return app
 
 # PUBLIC_INTERFACE

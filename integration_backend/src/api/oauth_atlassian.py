@@ -34,6 +34,10 @@ from .oauth_pkce import (
 )
 from .oauth_pkce import SessionData
 from .oauth_settings import get_atlassian_oauth_config, get_default_scopes
+from .oauth_config import (
+    get_jira_oauth_config,
+    get_frontend_base_url_default,
+)
 
 router = APIRouter()
 
@@ -143,6 +147,50 @@ async def atlassian_login(request: Request, state: Optional[str] = None, scope: 
     resp = RedirectResponse(url)
     _set_session_cookie(resp, session_id)
     return resp
+
+# PUBLIC_INTERFACE
+@router.get(
+    "/auth/jira/login",
+    tags=["Auth"],
+    summary="Start Jira OAuth 2.0 login (legacy shim)",
+    description="Redirects the user to Atlassian authorization page using legacy non-PKCE Jira client configuration.",
+)
+async def jira_login_legacy(state: Optional[str] = None, scope: Optional[str] = None):
+    """
+    Legacy Jira OAuth 2.0 authorization flow using client_secret.
+    This is kept for backward compatibility and mirrors the behavior in src/api/main.py,
+    but declared here so it is available under any active FastAPI entrypoint.
+
+    Returns:
+        302 redirect to Atlassian authorization endpoint.
+    """
+    cfg = get_jira_oauth_config()
+    client_id = cfg.get("client_id")
+    redirect_uri = cfg.get("redirect_uri")
+    if not client_id or not redirect_uri:
+        raise HTTPException(status_code=500, detail="Jira OAuth is not configured. Set environment variables.")
+
+    default_scopes = [
+        "read:jira-work",
+        "read:jira-user",
+        "offline_access",
+    ]
+    scopes = scope or " ".join(default_scopes)
+
+    authorize_url = "https://auth.atlassian.com/authorize"
+    params = {
+        "audience": "api.atlassian.com",
+        "client_id": client_id,
+        "scope": scopes,
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+        "prompt": "consent",
+    }
+    if state:
+        params["state"] = state
+
+    url = f"{authorize_url}?{urllib.parse.urlencode(params)}"
+    return RedirectResponse(url)
 
 # PUBLIC_INTERFACE
 @router.get(
@@ -369,6 +417,56 @@ async def list_accessible_resources(request: Request):
         items = resp.json()
 
     return JSONResponse({"status": "success", "message": "ok", "data": items})
+
+# PUBLIC_INTERFACE
+@router.get(
+    "/auth/jira/callback",
+    tags=["Auth"],
+    summary="Jira OAuth 2.0 callback (legacy shim)",
+    description="Handles Atlassian redirect for legacy non-PKCE flow, exchanges code for tokens (server-side), and redirects to frontend.",
+)
+async def jira_callback_legacy(request: Request, code: Optional[str] = None, state: Optional[str] = None):
+    """
+    Complete Jira OAuth 2.0 legacy flow (non-PKCE) for backward compatibility.
+    Exchanges code for tokens and redirects back to the frontend base URL.
+    For demo safety, tokens are not returned to client.
+
+    Note: This legacy handler does not persist to DB. Prefer PKCE session-based flows.
+    """
+    if not code:
+        raise HTTPException(status_code=400, detail="Missing authorization code")
+
+    cfg = get_jira_oauth_config()
+    client_id = cfg.get("client_id")
+    client_secret = cfg.get("client_secret")
+    redirect_uri = cfg.get("redirect_uri")
+    if not client_id or not client_secret or not redirect_uri:
+        raise HTTPException(status_code=500, detail="Jira OAuth is not configured. Set environment variables.")
+
+    token_url = "https://auth.atlassian.com/oauth/token"
+    data = {
+        "grant_type": "authorization_code",
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "code": code,
+        "redirect_uri": redirect_uri,
+    }
+
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        token_resp = await client.post(token_url, json=data, headers={"Content-Type": "application/json"})
+        if token_resp.status_code != 200:
+            raise HTTPException(status_code=502, detail=f"Token exchange failed: {token_resp.text}")
+        _ = token_resp.json()  # Do not expose tokens; this is legacy shim only.
+
+    # Redirect back to frontend; prefer configured FRONTEND_BASE_URL
+    frontend = get_frontend_base_url_default() or "/"
+    params = {
+        "provider": "jira",
+        "status": "success",
+        "state": state or "",
+    }
+    redirect_to = f"{frontend.rstrip('/')}/oauth/callback?{urllib.parse.urlencode(params)}"
+    return RedirectResponse(redirect_to)
 
 
 # PUBLIC_INTERFACE
