@@ -1,6 +1,6 @@
 from fastapi import FastAPI, Depends, HTTPException, status, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse, JSONResponse
+from fastapi.responses import RedirectResponse
 from typing import List, Dict, Any, Optional
 import time
 import urllib.parse
@@ -89,47 +89,6 @@ def health_check():
 # Mount new OAuth router for PKCE flow
 app.include_router(atlassian_oauth_router)
 
-# PUBLIC_INTERFACE
-@app.get(
-    "/routes",
-    tags=["Health"],
-    summary="List registered routes",
-    description="Diagnostic endpoint: lists all registered routes and methods.",
-)
-def list_routes() -> List[dict]:
-    """Return all registered routes for diagnostics."""
-    routes = []
-    for r in app.routes:
-        try:
-            path = getattr(r, "path", "")
-            methods = sorted(list(getattr(r, "methods", set())))
-            name = getattr(r, "name", "")
-            routes.append({"path": path, "methods": methods, "name": name})
-        except Exception:
-            continue
-    return routes
-
-# PUBLIC_INTERFACE
-@app.get(
-    "/auth",
-    tags=["Auth"],
-    summary="Auth routes index",
-    description="Minimal index listing available auth endpoints.",
-)
-def auth_index():
-    """Provide a simple index of auth-related endpoints for quick verification."""
-    return JSONResponse(
-        {
-            "auth_routes": [
-                "/auth/jira/login",
-                "/api/oauth/atlassian/login",
-                "/api/oauth/callback/atlassian",
-                "/api/oauth/atlassian/refresh",
-                "/api/atlassian/resources",
-            ]
-        }
-    )
-
 # Users (Public)
 
 # -----------------------
@@ -143,49 +102,20 @@ def auth_index():
     summary="Start Jira OAuth 2.0 login",
     description="Redirects the user to Atlassian authorization page. Frontend should open this URL to start the flow.",
 )
-def jira_login(
-    state: Optional[str] = None,
-    scope: Optional[str] = None,
-    return_url: Optional[str] = None,
-):
+def jira_login(state: Optional[str] = None, scope: Optional[str] = None):
     """
     Initiate Jira OAuth 2.0 authorization flow using Atlassian OAuth 2.0 (3LO).
-
     Parameters:
         state: Optional opaque state to be returned by Atlassian to mitigate CSRF (frontend should generate and verify).
         scope: Optional space-separated scopes. If not provided, defaults to commonly used scopes configured in your app.
-        return_url: Optional absolute URL to redirect the user after successful OAuth callback; this is embedded in state
-                    so the callback can use it. It is not sent to Atlassian directly as redirect_uri.
-
     Returns:
-        302/307 Redirect to Atlassian authorization endpoint when configured.
-        400 if parameters are invalid (e.g., malformed return_url).
-        501 if required environment configuration is missing.
+        Redirect to Atlassian authorization endpoint.
     """
     cfg = get_jira_oauth_config()
     client_id = cfg.get("client_id")
     redirect_uri = cfg.get("redirect_uri")
-
-    # Validate configuration
     if not client_id or not redirect_uri:
-        # More informative response for missing configuration
-        raise HTTPException(
-            status_code=501,
-            detail={
-                "error": "jira_oauth_not_configured",
-                "message": "Jira OAuth is not configured. Set JIRA_OAUTH_CLIENT_ID and JIRA_OAUTH_REDIRECT_URI.",
-                "missing": {
-                    "client_id": bool(client_id),
-                    "redirect_uri": bool(redirect_uri),
-                },
-            },
-        )
-
-    # Validate return_url (if provided) - must be absolute URL
-    if return_url:
-        parsed = urllib.parse.urlparse(return_url)
-        if not parsed.scheme or not parsed.netloc:
-            raise HTTPException(status_code=400, detail="Invalid return_url; must be an absolute URL.")
+        raise HTTPException(status_code=500, detail="Jira OAuth is not configured. Set environment variables.")
 
     # Default scopes can be tailored based on your app setup in Atlassian developer console
     default_scopes = [
@@ -194,13 +124,6 @@ def jira_login(
         "offline_access",
     ]
     scopes = scope or " ".join(default_scopes)
-
-    # Build state, embedding return_url if provided using a safe, compact encoding.
-    # Format: "<state>|ru=<urlencoded_return_url>"
-    embedded_state = state or ""
-    if return_url:
-        encoded_ru = urllib.parse.quote_plus(return_url)
-        embedded_state = f"{embedded_state}|ru={encoded_ru}" if embedded_state else f"ru={encoded_ru}"
 
     authorize_url = "https://auth.atlassian.com/authorize"
     params = {
@@ -211,12 +134,11 @@ def jira_login(
         "response_type": "code",
         "prompt": "consent",
     }
-    if embedded_state:
-        params["state"] = embedded_state
+    if state:
+        params["state"] = state
 
     url = f"{authorize_url}?{urllib.parse.urlencode(params)}"
-    # Use 307 to preserve method if clients accidentally call via POST, otherwise Starlette defaults to 307/302 handling
-    return RedirectResponse(url, status_code=307)
+    return RedirectResponse(url)
     
 
 # PUBLIC_INTERFACE
@@ -280,27 +202,6 @@ async def jira_callback(request: Request, db=Depends(get_db), code: Optional[str
     db.refresh(user)
 
     # Redirect back to frontend
-    # Determine final redirect destination:
-    # 1) If state embedded a return_url via 'ru=<url>', prefer it.
-    # 2) Else use FRONTEND_BASE_URL default and append /oauth/callback with status parameters.
-    embedded_return_url: Optional[str] = None
-    if state and "ru=" in state:
-        try:
-            embedded_return_url = urllib.parse.unquote_plus(state.split("ru=", 1)[1])
-            # Basic validation: must be absolute URL
-            parsed = urllib.parse.urlparse(embedded_return_url)
-            if not parsed.scheme or not parsed.netloc:
-                embedded_return_url = None
-        except Exception:
-            embedded_return_url = None
-
-    if embedded_return_url:
-        # If the URL already has query params, append with &; else start with ?
-        base = embedded_return_url
-        sep = "&" if "?" in base else "?"
-        redirect_to = f"{base}{sep}{urllib.parse.urlencode({'provider': 'jira', 'status': 'success', 'user_id': str(user.id)})}"
-        return RedirectResponse(redirect_to)
-
     frontend = get_frontend_base_url_default() or "/"
     # Include minimal status info; avoid exposing tokens
     params = {
