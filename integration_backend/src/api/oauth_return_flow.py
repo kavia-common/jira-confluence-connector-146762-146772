@@ -20,9 +20,8 @@ OpenAPI is provided via FastAPI decorators.
 from __future__ import annotations
 
 import logging
-import time
 import urllib.parse
-from typing import Optional, Dict, Tuple
+from typing import Optional
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request
@@ -39,32 +38,18 @@ from .oauth_pkce import (
     get_session,
     SessionData,
 )
+from .redis_client import (
+    save_oauth_state,
+    consume_oauth_state,
+    export_oauth_state_diagnostics,
+    get_state_ttl_seconds,
+)
 
 logger = logging.getLogger("oauth.return")
 
 router = APIRouter()
 
-# In-memory state store with TTL (demo-only).
-# Maps state -> (return_url, created_at_epoch, code_verifier_hint_len)
-_STATE_STORE: Dict[str, Tuple[str, int, int]] = {}
-_STATE_TTL_SECONDS = 10 * 60  # 10 minutes TTL
 
-
-def _now() -> int:
-    return int(time.time())
-
-
-def _prune_expired_states() -> None:
-    """Remove expired states from the store."""
-    if not _STATE_STORE:
-        return
-    cutoff = _now() - _STATE_TTL_SECONDS
-    to_delete = [k for k, v in _STATE_STORE.items() if v[1] < cutoff]
-    for k in to_delete:
-        try:
-            _STATE_STORE.pop(k, None)
-        except Exception:
-            pass
 
 
 def _is_absolute_url(url: str | None) -> bool:
@@ -137,9 +122,6 @@ async def oauth_atlassian_login(request: Request, return_url: Optional[str] = No
     if not _is_absolute_url(return_url):
         raise HTTPException(status_code=400, detail="Invalid or missing return_url; must be absolute (http/https).")
 
-    # Prune any expired states before creating new
-    _prune_expired_states()
-
     # PKCE and state
     code_verifier = generate_code_verifier()
     code_challenge = generate_code_challenge(code_verifier)
@@ -149,7 +131,13 @@ async def oauth_atlassian_login(request: Request, return_url: Optional[str] = No
     existing_sid = request.cookies.get("sid")
     session_id = get_or_create_session_id(existing_sid)
     save_session(session_id, SessionData(state=csrf_state, code_verifier=code_verifier, token_set=None))
-    _STATE_STORE[csrf_state] = (return_url, _now(), len(code_verifier))
+    save_oauth_state(
+        csrf_state,
+        {
+            "return_url": return_url,
+            "code_verifier": "***",  # avoid storing raw verifier; session holds it
+        },
+    )
 
     # Build authorize URL using exact env redirect_uri
     authorize_url = "https://auth.atlassian.com/authorize"
@@ -228,17 +216,15 @@ async def oauth_atlassian_callback(request: Request, code: Optional[str] = None,
     session_id = request.cookies.get("sid")
     sess = get_session(session_id) if session_id else None
 
-    # Prune prior to lookup
-    _prune_expired_states()
-    entry = _STATE_STORE.get(state)
-    if not entry:
-        # Provide clearer diagnostics
+    # Load and consume state payload (one-time)
+    state_payload = consume_oauth_state(state)
+    if not state_payload:
         logger.warning(
             "Callback with unknown/expired state=%s; cookie_present=%s",
             _mask_state(state or ""),
             bool(session_id),
         )
-        # Offer a safe JSON error if no way to redirect
+        # Without a stored return_url we can't safely redirect; return explicit JSON error
         return JSONResponse(
             status_code=400,
             content={
@@ -247,14 +233,13 @@ async def oauth_atlassian_callback(request: Request, code: Optional[str] = None,
             },
         )
 
-    saved_return, created_at, verifier_len = entry
-    # TTL check (defense in depth)
-    if created_at < (_now() - _STATE_TTL_SECONDS):
-        logger.warning("State expired by TTL; state=%s age_s=%d", _mask_state(state), _now() - created_at)
-        # Remove expired entry
-        _STATE_STORE.pop(state, None)
-        dest = f"{saved_return}?result=error&message={_encode_message('Login session expired. Please try again.')}"
-        return RedirectResponse(dest, status_code=307)
+    saved_return = state_payload.get("return_url") if isinstance(state_payload, dict) else None
+    if not _is_absolute_url(saved_return):
+        # Fallback safety: if return_url missing or invalid, emit JSON error
+        return JSONResponse(
+            status_code=400,
+            content={"detail": "Saved return_url missing or invalid. Restart the connection."},
+        )
 
     # Validate session and state alignment
     if not sess or not sess.state or sess.state != state or not sess.code_verifier:
@@ -297,12 +282,8 @@ async def oauth_atlassian_callback(request: Request, code: Optional[str] = None,
     # Persist tokens in session
     save_tokens(session_id, token_json)
 
-    # Success redirect and one-time consumption of state entry
+    # Success redirect; state already consumed for one-time use
     dest = f"{saved_return}?result=success"
-    try:
-        _STATE_STORE.pop(state, None)
-    except Exception:
-        pass
 
     resp = RedirectResponse(dest, status_code=307)
     resp.set_cookie(
@@ -330,16 +311,12 @@ async def oauth_diagnostics():
     Diagnostics endpoint to help trace state creation/expiration during development.
     Does not expose sensitive values.
     """
-    _prune_expired_states()
-    items = []
-    for st, (ret, created, ver_len) in list(_STATE_STORE.items()):
-        items.append(
-            {
-                "state": _mask_state(st),
-                "return_url_host": urllib.parse.urlparse(ret).netloc if ret else "",
-                "age_seconds": max(0, _now() - created),
-                "ttl_seconds": _STATE_TTL_SECONDS,
-                "code_verifier_len": ver_len,
-            }
-        )
-    return JSONResponse({"active_states": len(items), "items": items})
+    diag = export_oauth_state_diagnostics()
+    # Keep response shape stable and include backend type
+    return JSONResponse(
+        {
+            "backend": diag.get("backend"),
+            "approxActiveStates": diag.get("approxActiveStates", 0),
+            "ttlSeconds": diag.get("ttlSeconds", get_state_ttl_seconds()),
+        }
+    )

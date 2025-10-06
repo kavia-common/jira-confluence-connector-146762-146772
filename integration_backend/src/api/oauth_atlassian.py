@@ -571,6 +571,13 @@ async def get_effective_config():
     client_id_present = bool(cfg.get("client_id"))
     redirect_present = bool(cfg.get("redirect_uri"))
     scopes_present = bool(cfg.get("scopes"))
+    try:
+        from .redis_client import has_redis, get_state_ttl_seconds  # type: ignore
+        has_redis_flag = bool(has_redis())
+        ttl_seconds = int(get_state_ttl_seconds())
+    except Exception:
+        has_redis_flag = False
+        ttl_seconds = 600
     return JSONResponse(
         {
             "backendBaseUrl": cfg.get("backend_base_url") or "",
@@ -579,5 +586,7 @@ async def get_effective_config():
             "hasClientId": client_id_present,
             "hasRedirectUri": redirect_present,
             "hasScopes": scopes_present,
+            "hasRedis": has_redis_flag,
+            "stateTtlSeconds": ttl_seconds,
         }
     )

@@ -61,7 +61,7 @@ Dotenv:
 - The application attempts to load .env automatically on startup.
 - Set BACKEND_PUBLIC_BASE_URL to the publicly reachable backend ORIGIN (no trailing slash, no path), for example:
   BACKEND_PUBLIC_BASE_URL=https://vscode-internal-30616-beta.beta01.cloud.kavia.ai:3001
-  WRONG: BACKEND_PUBLIC_BASE_URL=https://vscode-internal-30616-beta.beta01.cloud.kavia.ai:3001/docs   <- contains a path and will be stripped
+  WRONG: BACKEND_PUBLIC_BASE_URL=https://vscode-internal-30616-beta.beta01.cloud.kavia.ai:3001  <- contains a path and will be stripped
   The backend will compute:
   redirect_uri=https://vscode-internal-30616-beta.beta01.cloud.kavia.ai:3001/api/oauth/atlassian/callback
 - You can verify at runtime via:
@@ -73,3 +73,15 @@ Examples:
   GET ${NEXT_PUBLIC_BACKEND_URL}/api/oauth/atlassian/login?return_url=${encodeURIComponent(`${window.location.origin}/connect`)}
 - Start via shim preserving UI redirect (alternate path):
   GET ${NEXT_PUBLIC_BACKEND_URL}/api/oauth/start?redirect=${encodeURIComponent(`${window.location.origin}/connect`)}
+
+Redis-backed state storage:
+- Set REDIS_URL=redis://localhost:6379 (or your managed Redis endpoint) to store OAuth state with TTL.
+- Configure OAUTH_STATE_TTL_SECONDS=600 (default 10 minutes) to control state lifetime.
+- The backend uses SETEX oauth:state:{state} -> {"return_url","code_verifier"} and consumes it once on callback.
+- If REDIS_URL is not set or Redis is unavailable, an in-memory fallback is used (not suitable for production).
+
+Diagnostics:
+- GET /api/config now includes:
+  { hasRedis: boolean, stateTtlSeconds: number, ... }
+- GET /api/oauth/diagnostics returns:
+  { backend: "redis"|"memory", approxActiveStates: number, ttlSeconds: number }
