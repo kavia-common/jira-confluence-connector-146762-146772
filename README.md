@@ -26,7 +26,7 @@ Now supports OAuth 2.0 (3LO) for Atlassian (Jira/Confluence):
    - `cp integration_backend/.env.example integration_backend/.env`
    - Set ATLASSIAN_CLOUD_BASE_URL, JIRA_OAUTH_CLIENT_ID/SECRET/REDIRECT_URI, APP_FRONTEND_URL, etc.
    - IMPORTANT: Set JIRA_OAUTH_REDIRECT_URI to the provided callback URL:
-     https://vscode-internal-36910-beta.beta01.cloud.kavia.ai:4000/oauth/jira
+     https://vscode-internal-26162-beta.beta01.cloud.kavia.ai:4000/oauth/jira
 4. Run API:
    - `uvicorn src.api.main:app --reload --port 3001 --app-dir integration_backend`
 5. Generate OpenAPI spec (optional, while API is running is not required):
