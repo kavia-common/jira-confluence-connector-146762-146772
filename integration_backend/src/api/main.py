@@ -50,11 +50,18 @@ app = FastAPI(
     openapi_tags=openapi_tags,
 )
 
+# CORS: explicitly allow the preview frontend origin in addition to existing settings.
+frontend_preview_origin = "https://vscode-internal-36910-beta.beta01.cloud.kavia.ai:4000"
+allowed_origins = ["*"]
+if "*" not in allowed_origins and frontend_preview_origin not in allowed_origins:
+    allowed_origins.append(frontend_preview_origin)
+
+# For simple GET /auth/jira JSON usage, credentials are not required.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
+    allow_origins=allowed_origins,
+    allow_credentials=False,
+    allow_methods=["GET", "OPTIONS", "POST"],
     allow_headers=["*"],
 )
 

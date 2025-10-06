@@ -38,19 +38,36 @@ def create_app() -> FastAPI:
         openapi_tags=openapi_tags,
     )
 
-    # CORS: Use env-driven allowlist to avoid hardcoding and prevent CORS mismatches.
+    # CORS: Use env-driven allowlist, and explicitly include the preview frontend origin.
     allowed_origins = get_cors_origins()
+    frontend_preview_origin = "https://vscode-internal-36910-beta.beta01.cloud.kavia.ai:4000"
+    if frontend_preview_origin not in allowed_origins and "*" not in allowed_origins:
+        allowed_origins = allowed_origins + [frontend_preview_origin]
+
+    # For simple GET to /auth/jira returning JSON, no credentials are required.
     app.add_middleware(
         CORSMiddleware,
         allow_origins=allowed_origins,
-        allow_credentials=True,
-        allow_methods=["*"],
+        allow_credentials=False,
+        allow_methods=["GET", "OPTIONS"],
         allow_headers=["*"],
     )
 
     # Routers (ensure /auth/jira and related endpoints are registered)
     app.include_router(health_router.router)
     app.include_router(oauth_router.router)
+
+    # PUBLIC_INTERFACE
+    @app.get(
+        "/auth/jira",
+        tags=["Auth"],
+        summary="Get Jira OAuth authorization URL (JSON) (app passthrough)",
+        description="Returns JSON { url } with the Atlassian authorize URL. Mirrors router handler to ensure availability at app level.",
+    )
+    async def _auth_jira_json_passthrough(state: str | None = None, scope: str | None = None):
+        """Ensures GET /auth/jira JSON endpoint is present at the app level."""
+        logging.getLogger("auth").info("Hit /auth/jira passthrough; forwarding to router handler.")
+        return await oauth_router.jira_get_oauth_url(state=state, scope=scope)
 
     # Provide an explicit pass-through route to guarantee /auth/jira/login exists at app-level
     # even if router import order changes in future refactors.
