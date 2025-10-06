@@ -9,6 +9,7 @@ import logging
 
 from src.api import oauth_atlassian as oauth_router
 from src.api import health as health_router
+from src.api.oauth_settings import get_cors_origins
 
 openapi_tags = [
     {"name": "Health", "description": "Health and readiness checks."},
@@ -37,12 +38,8 @@ def create_app() -> FastAPI:
         openapi_tags=openapi_tags,
     )
 
-    # CORS: Explicitly allow the frontend origin and localhost for dev.
-    allowed_origins = [
-        "https://vscode-internal-36910-beta.beta01.cloud.kavia.ai:4000",
-        "http://localhost:3000",
-        "https://localhost:3000",
-    ]
+    # CORS: Use env-driven allowlist to avoid hardcoding and prevent CORS mismatches.
+    allowed_origins = get_cors_origins()
     app.add_middleware(
         CORSMiddleware,
         allow_origins=allowed_origins,
