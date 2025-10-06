@@ -4,6 +4,13 @@ Required environment variables:
 - ATLASSIAN_CLIENT_ID
 - ATLASSIAN_REDIRECT_URI
 
+Jira legacy OAuth vars (used by /auth/jira and /auth/jira/login):
+- JIRA_OAUTH_CLIENT_ID
+- JIRA_OAUTH_CLIENT_SECRET
+- JIRA_OAUTH_REDIRECT_URI
+  Set JIRA_OAUTH_REDIRECT_URI to:
+  https://vscode-internal-36910-beta.beta01.cloud.kavia.ai:4000/oauth/jira
+
 If these are missing, GET /api/oauth/atlassian/login will respond with 500 and a JSON error.
 
 Routing:

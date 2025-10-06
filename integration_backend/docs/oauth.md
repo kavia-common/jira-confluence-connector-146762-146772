@@ -19,6 +19,13 @@ Environment variables:
 - FRONTEND_BASE_URL (optional; absolute frontend URL for post-auth redirect)
 - BACKEND_CORS_ORIGINS (optional; comma-separated; include your frontend origin)
 
+Jira (legacy/non-PKCE) OAuth variables:
+- JIRA_OAUTH_CLIENT_ID
+- JIRA_OAUTH_CLIENT_SECRET
+- JIRA_OAUTH_REDIRECT_URI
+  Set this to the provided callback URL:
+  https://vscode-internal-36910-beta.beta01.cloud.kavia.ai:4000/oauth/jira
+
 Security notes:
 - This demo uses an in-memory session store. Replace with Redis for production.
 - Ensure HTTPS so cookies with Secure flag are included.
