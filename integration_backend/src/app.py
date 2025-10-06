@@ -10,6 +10,7 @@ import logging
 from src.api import oauth_atlassian as oauth_router
 from src.api import health as health_router
 from src.api.oauth_settings import get_cors_origins
+from src.api.oauth_return_flow import router as oauth_return_router
 
 openapi_tags = [
     {"name": "Health", "description": "Health and readiness checks."},
@@ -57,6 +58,7 @@ def create_app() -> FastAPI:
     # Routers (ensure /auth/jira and related endpoints are registered)
     app.include_router(health_router.router)
     app.include_router(oauth_router.router)
+    app.include_router(oauth_return_router)
 
     # PUBLIC_INTERFACE
     @app.get(

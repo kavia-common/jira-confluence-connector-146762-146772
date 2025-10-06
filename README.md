@@ -9,14 +9,23 @@ This backend includes a lightweight SQLAlchemy-based persistence layer using SQL
 
 Now supports OAuth 2.0 (3LO) for Atlassian (Jira/Confluence):
 - Configure OAuth via environment variables (see `integration_backend/.env.example`).
-- New endpoints:
-  - GET /auth/jira/login -> redirects to Atlassian authorization
-  - GET /auth/jira/callback -> handles token exchange and stores tokens on the user
-  - GET /auth/confluence/login
-  - GET /auth/confluence/callback
+- New/Aligned endpoints:
+  - GET /api/oauth/atlassian/login -> accepts ?return_url=<absolute URL>, starts Atlassian OAuth with PKCE and redirects to Atlassian
+  - GET /api/oauth/atlassian/callback -> validates state, exchanges code, persists tokens (session), redirects back to return_url with result params
+  - Legacy: GET /auth/jira/login, GET /auth/jira/callback (kept for compatibility)
+  - GET /auth/confluence/login, GET /auth/confluence/callback (legacy simplified)
 - Existing connect endpoints now guide the UI to start the OAuth flow instead of storing tokens directly.
   - POST /integrations/jira/connect -> returns redirect_url "/auth/jira/login"
   - POST /integrations/confluence/connect -> returns redirect_url "/auth/confluence/login"
+
+Frontend return page:
+- The frontend Connect page (/connect) should be used as the return_url.
+  Example start:
+  window.location.href = `${process.env.NEXT_PUBLIC_BACKEND_URL}/api/oauth/atlassian/login?return_url=${encodeURIComponent(window.location.origin + '/connect')}`
+- After authentication, the backend will redirect to:
+  /connect?result=success
+  or
+  /connect?result=error&message=...
 
 ### Quick start (dev)
 1. Create and activate your environment.

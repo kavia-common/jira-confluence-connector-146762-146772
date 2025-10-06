@@ -37,6 +37,7 @@ from src.api.schemas import (
 # Include the OAuth router to ensure routes like /auth/jira are always registered
 from src.api import oauth_atlassian as oauth_router
 from src.api.oauth_settings import get_cors_origins
+from src.api.oauth_return_flow import router as oauth_return_router
 
 openapi_tags = [
     {"name": "Health", "description": "Health and readiness checks."},
@@ -236,6 +237,8 @@ async def jira_callback(request: Request, db=Depends(get_db), code: Optional[str
 
 # Include the OAuth router last to avoid overshadowing explicit app-level endpoints while guaranteeing availability
 app.include_router(oauth_router.router)
+# Register aligned return_url-based OAuth routes
+app.include_router(oauth_return_router)
 
 # PUBLIC_INTERFACE
 @app.post(
