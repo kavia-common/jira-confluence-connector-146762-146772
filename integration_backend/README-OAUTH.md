@@ -9,7 +9,7 @@ Jira legacy OAuth vars (used by /auth/jira and /auth/jira/login):
 - JIRA_OAUTH_CLIENT_SECRET
 - JIRA_OAUTH_REDIRECT_URI
   Set JIRA_OAUTH_REDIRECT_URI to:
-  https://vscode-internal-21712-beta.beta01.cloud.kavia.ai:4000/oauth/jira
+  https://vscode-internal-10679-beta.beta01.cloud.kavia.ai:4000/oauth/jira
 
 If these are missing, GET /api/oauth/atlassian/login will respond with 500 and a JSON error.
 
