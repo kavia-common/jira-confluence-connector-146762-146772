@@ -49,6 +49,8 @@ export default function ConnectPage() {
       </button>
       <div style={{ marginTop: 12, fontSize: 12, color: '#6B7280' }}>
         Ensure NEXT_PUBLIC_BACKEND_URL is set to your backend preview URL to avoid CORS/404 errors.
+        For the return_url-based flow, you can also directly open:
+        {` ${process.env.NEXT_PUBLIC_BACKEND_URL}/api/oauth/atlassian/login?return_url=${typeof window !== 'undefined' ? encodeURIComponent(window.location.origin + '/connect') : '%2Fconnect'}`}
       </div>
     </div>
   );

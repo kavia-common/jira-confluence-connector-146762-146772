@@ -9,6 +9,7 @@ Pages:
 - /connect: Preferred return page for the OAuth flow. Start login using:
   GET {NEXT_PUBLIC_BACKEND_URL}/api/oauth/atlassian/login?return_url=${encodeURIComponent(window.location.origin + '/connect')}
   The backend will redirect back to /connect with ?result=success or ?result=error&message=...
+  Note: return_url must be an absolute URL. State entries are valid for 10 minutes; late callbacks will show a clear error with a link back to /connect.
 - /oauth/callback: Legacy route used by older flows that return provider/status/user_id/state.
 
 Notes:

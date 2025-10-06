@@ -152,8 +152,8 @@ async def atlassian_login(request: Request, state: Optional[str] = None, scope: 
     Query:
         state: optional caller-provided state; otherwise generated server-side.
         scope: optional space-separated scopes; falls back to env defaults.
-        Note: Any 'redirect' query from the frontend is NOT used for Atlassian redirect_uri and will only be used
-        for post-callback UI navigation via state embedding.
+        redirect: optional absolute frontend URL to return to after callback; embedded in state as post_redirect.
+                  Use the dedicated /api/oauth/atlassian/login?return_url=... flow if you prefer explicit return_url storage.
 
     Returns:
         302 redirect to Atlassian authorize endpoint with PKCE params.
