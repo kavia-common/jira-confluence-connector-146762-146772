@@ -2,13 +2,13 @@
 
 Endpoints:
 - GET /api/oauth/atlassian/login
-- GET /api/oauth/callback/atlassian
+- GET /api/oauth/atlassian/callback
 - POST /api/oauth/atlassian/refresh
 - GET /api/atlassian/resources
 
 How it works:
 1. Frontend navigates the browser to /api/oauth/atlassian/login. The backend generates a state and PKCE values, stores them in a server-side session keyed by an httpOnly cookie, and redirects to Atlassian authorize.
-2. Atlassian redirects back to /api/oauth/callback/atlassian with a code and state. Backend validates state, exchanges code for tokens using code_verifier, stores tokens in the session, and redirects to APP_FRONTEND_URL (default /connected).
+2. Atlassian redirects back to /api/oauth/atlassian/callback with a code and state. Backend validates state, exchanges code for tokens using code_verifier, stores tokens in the session, and redirects to APP_FRONTEND_URL (default /connected).
 3. Frontend can call GET /api/atlassian/resources to verify and list accessible cloud IDs. The httpOnly cookie is automatically sent by the browser.
 
 Environment variables:

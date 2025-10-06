@@ -150,16 +150,7 @@ async def oauth_atlassian_login(request: Request, return_url: Optional[str] = No
     )
     return resp
 
-# PUBLIC_INTERFACE
-@router.get(
-    "/api/oauth/callback/jira",
-    tags=["Auth"],
-    summary="Compatibility alias: Atlassian OAuth callback (legacy path)",
-    description="Alias for /api/oauth/atlassian/callback to maintain compatibility with older clients.",
-)
-async def oauth_atlassian_callback_alias(request: Request, code: Optional[str] = None, state: Optional[str] = None):
-    """Compatibility wrapper that reuses the standardized callback."""
-    return await oauth_atlassian_callback(request=request, code=code, state=state)
+
 
 
 # PUBLIC_INTERFACE

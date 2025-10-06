@@ -15,9 +15,12 @@ Redirect URI registration:
   Example:
   https://your-backend.example.com/api/oauth/atlassian/callback
 
+Only the standardized callback is supported. Legacy aliases like /api/oauth/callback/jira have been removed.
+
 Notes:
 - If ATLASSIAN_REDIRECT_URI is set, the backend will compare it to the constructed value from BACKEND_PUBLIC_BASE_URL and log a warning if they differ.
 - The backend uses the constructed redirect_uri when BACKEND_PUBLIC_BASE_URL is provided to ensure exact match and avoid unauthorized_client errors.
+- Only /api/oauth/atlassian/callback is supported; update your Atlassian app and frontend accordingly.
 
 Jira legacy OAuth vars (for non-PKCE legacy flows):
 - JIRA_OAUTH_CLIENT_ID
@@ -35,8 +38,6 @@ New/Aligned Routing:
   Behavior: validate state and session, exchange code for tokens, persist tokens (in-memory session), redirect 307 to saved return_url with:
     - success: ?result=success
     - error: ?result=error&message=<url-encoded message>
-- Compatibility alias (legacy):
-  - GET /api/oauth/callback/jira -> forwards to /api/oauth/atlassian/callback
 
 Compatibility/Diagnostics:
 - GET /api/oauth/start -> 307 to /api/oauth/atlassian/login (preserves return_url via ?redirect=)
