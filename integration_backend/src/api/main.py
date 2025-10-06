@@ -5,6 +5,7 @@ from typing import List, Dict, Any, Optional
 import time
 import urllib.parse
 import httpx
+import logging
 
 from src.db.config import Base, engine, get_db
 
@@ -33,6 +34,9 @@ from src.api.schemas import (
     JiraProjectsFetchResponse,
     ConfluencePagesFetchResponse,
 )
+# Include the OAuth router to ensure routes like /auth/jira are always registered
+from src.api import oauth_atlassian as oauth_router
+from src.api.oauth_settings import get_cors_origins
 
 openapi_tags = [
     {"name": "Health", "description": "Health and readiness checks."},
@@ -50,11 +54,11 @@ app = FastAPI(
     openapi_tags=openapi_tags,
 )
 
-# CORS: explicitly allow the preview frontend origin in addition to existing settings.
+# CORS: use env-driven allowlist and ensure preview frontend origin is allowed
+allowed_origins = get_cors_origins()
 frontend_preview_origin = "https://vscode-internal-36910-beta.beta01.cloud.kavia.ai:4000"
-allowed_origins = ["*"]
-if "*" not in allowed_origins and frontend_preview_origin not in allowed_origins:
-    allowed_origins.append(frontend_preview_origin)
+if frontend_preview_origin not in allowed_origins and "*" not in allowed_origins:
+    allowed_origins = allowed_origins + [frontend_preview_origin]
 
 # For simple GET /auth/jira JSON usage, credentials are not required.
 app.add_middleware(
@@ -88,6 +92,22 @@ def health_check():
         JSON with status and a simple message.
     """
     return _ocean_response({"service": "integration_backend", "health": "healthy"}, "service healthy")
+
+
+# Ensure /auth/jira JSON exists at app level and delegates to the router builder
+# PUBLIC_INTERFACE
+@app.get(
+    "/auth/jira",
+    tags=["Auth"],
+    summary="Get Jira OAuth authorization URL (JSON)",
+    description="Returns JSON { url } with the Atlassian authorize URL constructed from environment configuration.",
+)
+async def auth_jira_json(state: Optional[str] = None, scope: Optional[str] = None):
+    """
+    App-level passthrough to guarantee GET /auth/jira returns JSON {url}.
+    """
+    logging.getLogger("auth").info("Hit /auth/jira (main.py); forwarding to router handler.")
+    return await oauth_router.jira_get_oauth_url(state=state, scope=scope)
 
 
 # Users (Public)
@@ -213,6 +233,10 @@ async def jira_callback(request: Request, db=Depends(get_db), code: Optional[str
     }
     redirect_to = f"{frontend.rstrip('/')}/oauth/callback?{urllib.parse.urlencode(params)}"
     return RedirectResponse(redirect_to)
+
+# Include the OAuth router last to avoid overshadowing explicit app-level endpoints while guaranteeing availability
+app.include_router(oauth_router.router)
+
 # PUBLIC_INTERFACE
 @app.post(
     "/users",
