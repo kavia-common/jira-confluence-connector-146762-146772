@@ -7,7 +7,6 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import logging
 
-from src.api.oauth_settings import get_cors_origins
 from src.api import oauth_atlassian as oauth_router
 from src.api import health as health_router
 
@@ -26,9 +25,10 @@ def create_app() -> FastAPI:
 
     Notes:
         - Includes oauth_atlassian router which defines:
+          GET /auth/jira -> returns JSON {url} to begin Jira OAuth,
           GET /auth/jira/login (legacy shim), GET /api/auth/jira/login (alias),
           GET /api/oauth/atlassian/login (PKCE), and diagnostics like GET /routes.
-        - The frontend should call GET /auth/jira/login to start Jira OAuth.
+        - The frontend can call GET /auth/jira to fetch the authorize URL and then redirect the browser.
     """
     app = FastAPI(
         title="Jira-Confluence Integration API",
@@ -37,17 +37,21 @@ def create_app() -> FastAPI:
         openapi_tags=openapi_tags,
     )
 
-    # CORS
-    origins = get_cors_origins()
+    # CORS: Explicitly allow the frontend origin and localhost for dev.
+    allowed_origins = [
+        "https://vscode-internal-36910-beta.beta01.cloud.kavia.ai:4000",
+        "http://localhost:3000",
+        "https://localhost:3000",
+    ]
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=origins,
+        allow_origins=allowed_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
     )
 
-    # Routers
+    # Routers (ensure /auth/jira and related endpoints are registered)
     app.include_router(health_router.router)
     app.include_router(oauth_router.router)
 
@@ -66,7 +70,9 @@ def create_app() -> FastAPI:
         # Defer to router implementation to build the redirect URL consistently
         return await oauth_router.jira_login_legacy(state=state, scope=scope)
 
-    logging.getLogger("startup").info("App created via src.app:create_app; routers mounted. Visit GET /routes for route list.")
+    logging.getLogger("startup").info(
+        "App created via src.app:create_app; routers mounted. Visit GET /routes for route list."
+    )
     return app
 
 # PUBLIC_INTERFACE
