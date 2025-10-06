@@ -43,6 +43,59 @@ router = APIRouter()
 
 # PUBLIC_INTERFACE
 @router.get(
+    "/auth/jira",
+    tags=["Auth"],
+    summary="Get Jira OAuth authorization URL (JSON)",
+    description="Returns JSON { url } with the Atlassian authorize URL constructed from environment configuration. Frontend should fetch this endpoint and redirect the browser to the returned url.",
+    responses={
+        200: {
+            "description": "Successful Response",
+            "content": {"application/json": {"example": {"url": "https://auth.atlassian.com/authorize?..."} }},
+        },
+        500: {"description": "Server error when OAuth is not configured"},
+    },
+)
+async def jira_get_oauth_url(state: Optional[str] = None, scope: Optional[str] = None):
+    """
+    Return the Atlassian authorize URL for Jira OAuth 2.0 as JSON.
+
+    Query:
+        state: optional state string to be appended.
+        scope: optional space-separated scopes (falls back to defaults in this handler).
+
+    Returns:
+        JSON object: {"url": "<authorize url>"}
+    """
+    cfg = get_jira_oauth_config()
+    client_id = cfg.get("client_id")
+    redirect_uri = cfg.get("redirect_uri")
+    if not client_id or not redirect_uri:
+        raise HTTPException(status_code=500, detail="Jira OAuth is not configured. Set environment variables.")
+
+    default_scopes = [
+        "read:jira-work",
+        "read:jira-user",
+        "offline_access",
+    ]
+    scopes = scope or " ".join(default_scopes)
+
+    authorize_url = "https://auth.atlassian.com/authorize"
+    params = {
+        "audience": "api.atlassian.com",
+        "client_id": client_id,
+        "scope": scopes,
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+        "prompt": "consent",
+    }
+    if state:
+        params["state"] = state
+
+    url = f"{authorize_url}?{urllib.parse.urlencode(params)}"
+    return JSONResponse({"url": url})
+
+# PUBLIC_INTERFACE
+@router.get(
     "/api/auth/jira/login",
     tags=["Auth"],
     summary="Alias: Start Jira OAuth (API-prefixed)",
