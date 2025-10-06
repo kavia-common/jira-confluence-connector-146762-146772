@@ -24,8 +24,37 @@ _logger = logging.getLogger("config.oauth")
 
 
 def _normalize_base(url: str) -> str:
-    """Normalize base URL to not end with a trailing slash."""
-    return url.rstrip("/") if url else url
+    """Normalize base URL to origin only (scheme://host[:port]) and remove trailing slashes.
+
+    Guardrail:
+    - If a path is present (e.g., '/docs'), strip it and log a warning.
+    - Ensures BACKEND_PUBLIC_BASE_URL is never using a subpath which would break Atlassian redirect_uri matching.
+    """
+    if not url:
+        return url
+    try:
+        from urllib.parse import urlparse
+
+        parsed = urlparse(url.strip())
+        if not parsed.scheme or not parsed.netloc:
+            return url.rstrip("/")
+        origin = f"{parsed.scheme}://{parsed.netloc}"
+        # Log if a path/query/fragment was present and will be dropped
+        if parsed.path and parsed.path not in ("", "/"):
+            _logger.warning(
+                "BACKEND_PUBLIC_BASE_URL contains a path segment '%s'. Using origin '%s' instead for redirect_uri construction.",
+                parsed.path,
+                origin,
+            )
+        if parsed.query or parsed.fragment:
+            _logger.warning(
+                "BACKEND_PUBLIC_BASE_URL contains query/fragment. These will be ignored. Using origin '%s'.",
+                origin,
+            )
+        return origin.rstrip("/")
+    except Exception:
+        # Fallback to simple rstrip if parsing fails
+        return url.rstrip("/")
 
 
 def _build_redirect_uri_from_base(base: str) -> str:
@@ -44,7 +73,15 @@ def get_atlassian_oauth_config() -> dict:
     - Prefer constructing redirect_uri as BACKEND_PUBLIC_BASE_URL + '/api/oauth/atlassian/callback'
     - If ATLASSIAN_REDIRECT_URI is set, validate it matches the constructed one and log a warning on mismatch.
     """
-    backend_public_base = os.getenv("BACKEND_PUBLIC_BASE_URL", "").strip() or os.getenv("BACKEND_BASE_URL", "").strip()
+    raw_backend_public_base = os.getenv("BACKEND_PUBLIC_BASE_URL", "").strip() or os.getenv("BACKEND_BASE_URL", "").strip()
+    # Normalize and detect if path existed
+    backend_public_base = _normalize_base(raw_backend_public_base)
+    if raw_backend_public_base and raw_backend_public_base.rstrip("/") != backend_public_base.rstrip("/"):
+        _logger.warning(
+            "Adjusted BACKEND_PUBLIC_BASE_URL from '%s' to origin '%s' to avoid path segments breaking Atlassian redirect_uri matching.",
+            raw_backend_public_base,
+            backend_public_base,
+        )
     constructed_redirect = _build_redirect_uri_from_base(backend_public_base)
 
     env_redirect = os.getenv("ATLASSIAN_REDIRECT_URI", "").strip()
@@ -82,6 +119,17 @@ def get_atlassian_oauth_config() -> dict:
         cfg["frontend_url"],
         mismatch_note,
     )
+    if cfg["backend_base_url"]:
+        _logger.info(
+            "Computed Atlassian redirect_uri from origin: %s",
+            constructed_redirect or "",
+        )
+    if env_redirect and constructed_redirect and env_redirect != constructed_redirect:
+        _logger.warning(
+            "ATLASSIAN_REDIRECT_URI ('%s') differs from computed redirect_uri ('%s'). Atlassian must be configured with the computed value.",
+            env_redirect,
+            constructed_redirect,
+        )
 
     # Fail-fast hints in logs if critical values missing (routes will still raise HTTPException)
     if not cfg["client_id"]:

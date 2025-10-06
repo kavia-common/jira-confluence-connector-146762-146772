@@ -7,7 +7,7 @@ Required environment variables:
 - ATLASSIAN_CLIENT_SECRET (optional with PKCE)
 - ATLASSIAN_SCOPES (optional; space-separated)
 - BACKEND_CORS_ORIGINS (comma-separated origins; include your frontend origin)
-- BACKEND_PUBLIC_BASE_URL (recommended; absolute URL of the backend, used to construct redirect_uri)
+- BACKEND_PUBLIC_BASE_URL (recommended; absolute URL ORIGIN of the backend, used to construct redirect_uri; must NOT include any path like '/docs')
 
 Redirect URI registration:
 - Register the following exact redirect URI in the Atlassian Developer Console:
@@ -59,9 +59,13 @@ Host and frontend settings:
 
 Dotenv:
 - The application attempts to load .env automatically on startup.
-- Set BACKEND_PUBLIC_BASE_URL to the publicly reachable backend URL (no trailing slash), for example:
+- Set BACKEND_PUBLIC_BASE_URL to the publicly reachable backend ORIGIN (no trailing slash, no path), for example:
   BACKEND_PUBLIC_BASE_URL=https://vscode-internal-30616-beta.beta01.cloud.kavia.ai:3001
-  This yields redirect_uri=https://vscode-internal-30616-beta.beta01.cloud.kavia.ai:3001/api/oauth/atlassian/callback
+  WRONG: BACKEND_PUBLIC_BASE_URL=https://vscode-internal-30616-beta.beta01.cloud.kavia.ai:3001/docs   <- contains a path and will be stripped
+  The backend will compute:
+  redirect_uri=https://vscode-internal-30616-beta.beta01.cloud.kavia.ai:3001/api/oauth/atlassian/callback
+- You can verify at runtime via:
+  GET {BACKEND_PUBLIC_BASE_URL}/api/config -> field "redirectUri" must match what you registered in Atlassian.
 - See integration_backend/.env.example for variables.
 
 Examples:
