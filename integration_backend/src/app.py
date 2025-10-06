@@ -22,7 +22,14 @@ openapi_tags = [
 
 # PUBLIC_INTERFACE
 def create_app() -> FastAPI:
-    """Create and configure the FastAPI app."""
+    """Create and configure the FastAPI app.
+
+    Notes:
+        - Includes oauth_atlassian router which defines:
+          GET /auth/jira/login (legacy shim), GET /api/auth/jira/login (alias),
+          GET /api/oauth/atlassian/login (PKCE), and diagnostics like GET /routes.
+        - The frontend should call GET /auth/jira/login to start Jira OAuth.
+    """
     app = FastAPI(
         title="Jira-Confluence Integration API",
         description="Backend API for integrating JIRA and Confluence, with a lightweight persistence layer.",
@@ -43,6 +50,21 @@ def create_app() -> FastAPI:
     # Routers
     app.include_router(health_router.router)
     app.include_router(oauth_router.router)
+
+    # Provide an explicit pass-through route to guarantee /auth/jira/login exists at app-level
+    # even if router import order changes in future refactors.
+    # PUBLIC_INTERFACE
+    @app.get(
+        "/auth/jira/login",
+        tags=["Auth"],
+        summary="Start Jira OAuth 2.0 login (app passthrough)",
+        description="Pass-through to oauth router legacy shim to redirect to Atlassian authorization.",
+    )
+    async def _auth_jira_login_passthrough(state: str | None = None, scope: str | None = None):
+        """Ensures GET /auth/jira/login is always present on the app."""
+        logging.getLogger("auth").info("Hit /auth/jira/login passthrough; forwarding to router handler.")
+        # Defer to router implementation to build the redirect URL consistently
+        return await oauth_router.jira_login_legacy(state=state, scope=scope)
 
     logging.getLogger("startup").info("App created via src.app:create_app; routers mounted. Visit GET /routes for route list.")
     return app
