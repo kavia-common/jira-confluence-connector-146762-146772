@@ -45,11 +45,12 @@ def create_app() -> FastAPI:
         allowed_origins = allowed_origins + [frontend_preview_origin]
 
     # For simple GET to /auth/jira returning JSON, no credentials are required.
+    # CORS must be added BEFORE route inclusion so responses include Access-Control-Allow-Origin.
     app.add_middleware(
         CORSMiddleware,
         allow_origins=allowed_origins,
         allow_credentials=False,
-        allow_methods=["GET", "OPTIONS"],
+        allow_methods=["GET", "OPTIONS", "POST"],
         allow_headers=["*"],
     )
 
