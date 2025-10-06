@@ -1,20 +1,30 @@
 # OAuth Start Flow (Backend)
 
-Aligned Atlassian OAuth endpoints with return_url handling.
+Aligned Atlassian OAuth endpoints with return_url handling and standardized redirect_uri.
 
 Required environment variables:
 - ATLASSIAN_CLIENT_ID
-- ATLASSIAN_REDIRECT_URI
 - ATLASSIAN_CLIENT_SECRET (optional with PKCE)
 - ATLASSIAN_SCOPES (optional; space-separated)
 - BACKEND_CORS_ORIGINS (comma-separated origins; include your frontend origin)
+- BACKEND_PUBLIC_BASE_URL (recommended; absolute URL of the backend, used to construct redirect_uri)
 
-Jira legacy OAuth vars (used by /auth/jira and /auth/jira/login):
+Redirect URI registration:
+- Register the following exact redirect URI in the Atlassian Developer Console:
+  {BACKEND_PUBLIC_BASE_URL}/api/oauth/atlassian/callback
+  Example:
+  https://your-backend.example.com/api/oauth/atlassian/callback
+
+Notes:
+- If ATLASSIAN_REDIRECT_URI is set, the backend will compare it to the constructed value from BACKEND_PUBLIC_BASE_URL and log a warning if they differ.
+- The backend uses the constructed redirect_uri when BACKEND_PUBLIC_BASE_URL is provided to ensure exact match and avoid unauthorized_client errors.
+
+Jira legacy OAuth vars (for non-PKCE legacy flows):
 - JIRA_OAUTH_CLIENT_ID
 - JIRA_OAUTH_CLIENT_SECRET
 - JIRA_OAUTH_REDIRECT_URI
 
-If these are missing, GET /api/oauth/atlassian/login will respond with 500 and a JSON error.
+If required env values are missing, GET /api/oauth/atlassian/login returns a 500 with a helpful error message indicating which variables to set.
 
 New/Aligned Routing:
 - GET /api/oauth/atlassian/login
@@ -25,11 +35,13 @@ New/Aligned Routing:
   Behavior: validate state and session, exchange code for tokens, persist tokens (in-memory session), redirect 307 to saved return_url with:
     - success: ?result=success
     - error: ?result=error&message=<url-encoded message>
+- Compatibility alias (legacy):
+  - GET /api/oauth/callback/jira -> forwards to /api/oauth/atlassian/callback
 
 Compatibility/Diagnostics:
-- GET /api/oauth/start -> 307 to /api/oauth/atlassian/login (preserves redirect/return_url into redirect state embedding)
+- GET /api/oauth/start -> 307 to /api/oauth/atlassian/login (preserves return_url via ?redirect=)
 - GET /routes -> lists registered routes for diagnostics
-- GET /api/config -> shows effective backendBaseUrl, frontendBaseUrl, redirectUri and presence flags
+- GET /api/config -> shows effective backendBaseUrl, frontendBaseUrl, redirectUri and presence flags. Use this to verify redirectUri matches what you registered.
 
 Frontend Integration:
 - Use your Connect page (e.g., /connect) as return_url:
@@ -46,6 +58,9 @@ Host and frontend settings:
 
 Dotenv:
 - The application attempts to load .env automatically on startup.
+- Set BACKEND_PUBLIC_BASE_URL to the publicly reachable backend URL (no trailing slash), for example:
+  BACKEND_PUBLIC_BASE_URL=https://vscode-internal-30616-beta.beta01.cloud.kavia.ai:3001
+  This yields redirect_uri=https://vscode-internal-30616-beta.beta01.cloud.kavia.ai:3001/api/oauth/atlassian/callback
 - See integration_backend/.env.example for variables.
 
 Examples:

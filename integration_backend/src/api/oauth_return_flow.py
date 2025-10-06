@@ -91,10 +91,22 @@ async def oauth_atlassian_login(request: Request, return_url: Optional[str] = No
     cfg = get_atlassian_oauth_config()
     client_id = cfg.get("client_id")
     redirect_uri = cfg.get("redirect_uri")
+    backend_base = cfg.get("backend_base_url")
     scopes = scope or cfg.get("scopes") or get_default_scopes()
 
-    if not client_id or not redirect_uri:
-        raise HTTPException(status_code=500, detail="Atlassian OAuth not configured. Set ATLASSIAN_CLIENT_ID and ATLASSIAN_REDIRECT_URI.")
+    # Fail fast with actionable errors
+    missing = []
+    if not client_id:
+        missing.append("ATLASSIAN_CLIENT_ID")
+    if not redirect_uri:
+        # Provide constructed expectation if backend_base is present
+        hint = f"{(backend_base.rstrip('/') + '/api/oauth/atlassian/callback') if backend_base else 'BACKEND_PUBLIC_BASE_URL + /api/oauth/atlassian/callback'}"
+        raise HTTPException(
+            status_code=500,
+            detail=f"Missing redirect_uri. Set BACKEND_PUBLIC_BASE_URL so redirect_uri resolves to {hint}, or set ATLASSIAN_REDIRECT_URI explicitly.",
+        )
+    if missing:
+        raise HTTPException(status_code=500, detail=f"Missing environment variables: {', '.join(missing)}")
 
     if not _is_absolute_url(return_url):
         raise HTTPException(status_code=400, detail="Invalid or missing return_url; must be absolute (http/https).")
@@ -137,6 +149,17 @@ async def oauth_atlassian_login(request: Request, return_url: Optional[str] = No
         max_age=60 * 60 * 24 * 14,
     )
     return resp
+
+# PUBLIC_INTERFACE
+@router.get(
+    "/api/oauth/callback/jira",
+    tags=["Auth"],
+    summary="Compatibility alias: Atlassian OAuth callback (legacy path)",
+    description="Alias for /api/oauth/atlassian/callback to maintain compatibility with older clients.",
+)
+async def oauth_atlassian_callback_alias(request: Request, code: Optional[str] = None, state: Optional[str] = None):
+    """Compatibility wrapper that reuses the standardized callback."""
+    return await oauth_atlassian_callback(request=request, code=code, state=state)
 
 
 # PUBLIC_INTERFACE
