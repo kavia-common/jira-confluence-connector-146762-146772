@@ -37,7 +37,12 @@ Frontend return page:
    - IMPORTANT: Set JIRA_OAUTH_REDIRECT_URI to the provided callback URL:
      https://vscode-internal-28615-beta.beta01.cloud.kavia.ai:4000/oauth/jira
 4. Run API:
-   - `uvicorn src.api.main:app --reload --port 3001 --app-dir integration_backend`
+   - From repository root:
+     `uvicorn src.app:app --reload --port 3001 --app-dir integration_backend`
+   - Or from the backend directory:
+     `cd integration_backend && uvicorn src.app:app --reload --port 3001`
+   - Alternatively, use the convenience runner:
+     `python -c "import src.app as a; a.run()"` (run from `integration_backend`)
 5. Generate OpenAPI spec (optional, while API is running is not required):
    - `python -m src.api.generate_openapi` (run from `integration_backend` directory)
 
