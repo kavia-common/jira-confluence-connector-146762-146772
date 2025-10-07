@@ -14,7 +14,7 @@ How it works:
 Environment variables:
 - ATLASSIAN_CLIENT_ID (required)
 - ATLASSIAN_CLIENT_SECRET (optional)
-- ATLASSIAN_REDIRECT_URI (required; must match Atlassian console, e.g. https://<backend>/api/oauth/callback/atlassian)
+- ATLASSIAN_REDIRECT_URI (recommended; if not set, the backend computes it from BACKEND_PUBLIC_BASE_URL as https://<backend>/api/oauth/atlassian/callback)
 - ATLASSIAN_SCOPES (optional; space-separated)
 - FRONTEND_BASE_URL (optional; absolute frontend URL for post-auth redirect)
 - BACKEND_CORS_ORIGINS (optional; comma-separated; include your frontend origin)

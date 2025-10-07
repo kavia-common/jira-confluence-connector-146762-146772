@@ -66,7 +66,7 @@ Dotenv:
 - The application attempts to load .env automatically on startup.
 - Set BACKEND_PUBLIC_BASE_URL to the publicly reachable backend ORIGIN (no trailing slash, no path), for example:
   BACKEND_PUBLIC_BASE_URL=https://vscode-internal-28615-beta.beta01.cloud.kavia.ai:3001
-  WRONG: BACKEND_PUBLIC_BASE_URL=https://vscode-internal-28615-beta.beta01.cloud.kavia.ai:3001  <- contains a path and will be stripped
+  WRONG: BACKEND_PUBLIC_BASE_URL=https://vscode-internal-28615-beta.beta01.cloud.kavia.ai:3001/docs  <- contains a path and will be stripped
   The backend will compute:
   redirect_uri=https://vscode-internal-28615-beta.beta01.cloud.kavia.ai:3001/api/oauth/atlassian/callback
 - You can verify at runtime via:
