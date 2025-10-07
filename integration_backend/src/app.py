@@ -6,11 +6,13 @@ from src import startup  # noqa: F401
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import logging
+import os
 
 from src.api import oauth_atlassian as oauth_router
 from src.api import health as health_router
 from src.api.oauth_settings import get_cors_origins
 from src.api.oauth_return_flow import router as oauth_return_router
+from src.api.main import router as api_router
 
 openapi_tags = [
     {"name": "Health", "description": "Health and readiness checks."},
@@ -54,6 +56,7 @@ def create_app() -> FastAPI:
 
     # Routers (ensure /auth/jira and related endpoints are registered)
     app.include_router(health_router.router)
+    app.include_router(api_router)  # users, integrations, additional endpoints
     app.include_router(oauth_router.router)
     app.include_router(oauth_return_router)
 
@@ -91,3 +94,19 @@ def create_app() -> FastAPI:
 
 # PUBLIC_INTERFACE
 app = create_app()
+
+# PUBLIC_INTERFACE
+def run():
+    """Convenience runner for local/CI.
+
+    Reads:
+        PORT: Optional port to bind (default: 3001)
+        HOST: Optional host to bind (default: 0.0.0.0)
+
+    Starts uvicorn against src.app:app.
+    """
+    import uvicorn
+
+    port = int(os.getenv("PORT", "3001"))
+    host = os.getenv("HOST", "0.0.0.0")
+    uvicorn.run("src.app:app", host=host, port=port, reload=False)
