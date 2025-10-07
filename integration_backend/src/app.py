@@ -42,6 +42,14 @@ def create_app() -> FastAPI:
 
     # CORS: Use env-driven allowlist, and explicitly include the preview frontend origin.
     allowed_origins = get_cors_origins()
+    # Safety net: if env does not provide any, allow common dev origins
+    if not allowed_origins:
+        allowed_origins = [
+            "http://localhost:3000",
+            "http://127.0.0.1:3000",
+            "http://localhost:3001",
+            "http://127.0.0.1:3001",
+        ]
 
     # For simple GET to /auth/jira returning JSON, no credentials are required.
     # CORS must be added BEFORE route inclusion so responses include Access-Control-Allow-Origin.

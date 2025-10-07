@@ -13,7 +13,7 @@ Health check: Importing this module should succeed and expose `app` for uvicorn.
 """
 
 # PUBLIC_INTERFACE
-# Re-export the canonical FastAPI app instance
+# Re-export the canonical FastAPI app instance from src.app without introducing circular imports.
 from src.app import app  # noqa: F401
 
 # Optional explicit export for clarity
