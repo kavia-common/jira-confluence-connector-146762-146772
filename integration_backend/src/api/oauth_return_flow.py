@@ -184,6 +184,27 @@ async def oauth_atlassian_login(request: Request, return_url: Optional[str] = No
         len((scopes or '').split()),
     )
 
+    # Determine if the client expects a JSON response (XHR/fetch) instead of a 307 redirect.
+    # We support both Accept-based detection and X-Requested-With (if present).
+    accept = (request.headers.get("accept") or "").lower()
+    xrw = (request.headers.get("x-requested-with") or "").lower()
+    wants_json = ("application/json" in accept) or (xrw == "xmlhttprequest")
+
+    if wants_json:
+        # Return JSON payload with the Atlassian authorization URL and set session cookie.
+        resp = JSONResponse({"url": url})
+        resp.set_cookie(
+            key="sid",
+            value=session_id,
+            httponly=True,
+            secure=True,
+            samesite="lax",
+            path="/",
+            max_age=60 * 60 * 24 * 14,
+        )
+        return resp
+
+    # Default: issue a redirect for normal browser navigations
     resp = RedirectResponse(url, status_code=307)
     # Ensure cookie is set for session continuity
     resp.set_cookie(

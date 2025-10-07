@@ -145,7 +145,7 @@ def _set_session_cookie(resp: Response, session_id: str) -> None:
     summary="Start Atlassian OAuth 2.0 (3LO) with PKCE",
     description="Generates PKCE parameters and redirects to Atlassian authorization endpoint.",
 )
-async def atlassian_login(request: Request, state: Optional[str] = None, scope: Optional[str] = None):
+async def atlassian_login(request: Request, state: Optional[str] = None, scope: Optional[str] = None, return_url: Optional[str] = None):
     """
     Initiate Atlassian OAuth with PKCE.
 
@@ -175,7 +175,8 @@ async def atlassian_login(request: Request, state: Optional[str] = None, scope: 
         )
 
     # Optional UI redirect after successful callback, captured from query but not sent to Atlassian
-    post_redirect = request.query_params.get("redirect")
+    # Support both ?redirect= and ?return_url= as aliases.
+    post_redirect = request.query_params.get("redirect") or return_url
 
     # PKCE + state
     code_verifier = generate_code_verifier()
@@ -227,7 +228,17 @@ async def atlassian_login(request: Request, state: Optional[str] = None, scope: 
         authorize_url,
     )
 
-    resp = RedirectResponse(url)
+    # Determine if the client expects JSON (XHR/fetch) vs browser navigation
+    accept = (request.headers.get("accept") or "").lower()
+    xrw = (request.headers.get("x-requested-with") or "").lower()
+    wants_json = ("application/json" in accept) or (xrw == "xmlhttprequest")
+
+    if wants_json:
+        resp = JSONResponse({"url": url})
+        _set_session_cookie(resp, session_id)
+        return resp
+
+    resp = RedirectResponse(url, status_code=307)
     _set_session_cookie(resp, session_id)
     return resp
 
