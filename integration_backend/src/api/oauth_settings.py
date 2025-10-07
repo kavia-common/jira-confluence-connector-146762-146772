@@ -126,7 +126,7 @@ def get_cors_origins() -> List[str]:
     - BACKEND_CORS_ORIGINS: comma-separated list of origins. Example:
         BACKEND_CORS_ORIGINS=https://frontend.example.com,http://localhost:3000
     - If empty, default to ["http://localhost:3000"] for local development.
-    - If FRONTEND_BASE_URL or NEXT_PUBLIC_FRONTEND_BASE_URL are present, include them.
+    - If FRONTEND_BASE_URL or NEXT_PUBLIC_FRONTEND_BASE_URL are present, include their exact values.
     - Never return ["*"] when cookies/sessions may be used, because allow_credentials=True
       cannot be combined with wildcard origins.
     """
@@ -140,4 +140,6 @@ def get_cors_origins() -> List[str]:
     if not origins:
         # Safe default for local dev; cloud previews must set BACKEND_CORS_ORIGINS explicitly
         origins = ["http://localhost:3000"]
+    # Do not allow wildcard when credentials are used; filter it out just in case
+    origins = [o for o in origins if o != "*"]
     return origins
