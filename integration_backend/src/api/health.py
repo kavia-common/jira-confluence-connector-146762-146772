@@ -13,3 +13,13 @@ router = APIRouter()
 def health_check():
     """Simple health check endpoint."""
     return JSONResponse({"status": "ok", "message": "integration_backend running"})
+
+@router.get(
+    "/health",
+    tags=["Health"],
+    summary="Health Check (alias)",
+    description="Alias endpoint for health checks. Returns the same payload as '/'.",
+)
+def health_check_alias():
+    """Alias health endpoint for compatibility."""
+    return JSONResponse({"status": "ok", "message": "integration_backend running"})
