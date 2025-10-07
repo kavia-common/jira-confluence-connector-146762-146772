@@ -7,6 +7,11 @@ Required environment variables:
 - ATLASSIAN_CLIENT_SECRET (optional with PKCE)
 - ATLASSIAN_SCOPES (optional; space-separated)
 - BACKEND_CORS_ORIGINS (comma-separated origins; include your frontend origin)
+  Example:
+    BACKEND_CORS_ORIGINS=https://vscode-internal-18211-beta.beta01.cloud.kavia.ai:3000,http://localhost:3000
+  Note:
+    - Because the backend issues an httpOnly session cookie (sid), CORS allow_credentials=True is enabled.
+      Do not use '*' for origins; specify explicit origins.
 - BACKEND_PUBLIC_BASE_URL (recommended; absolute URL ORIGIN of the backend, used to construct redirect_uri; must NOT include any path like '/docs')
 
 Redirect URI registration:
@@ -65,10 +70,10 @@ Host and frontend settings:
 Dotenv:
 - The application attempts to load .env automatically on startup.
 - Set BACKEND_PUBLIC_BASE_URL to the publicly reachable backend ORIGIN (no trailing slash, no path), for example:
-  BACKEND_PUBLIC_BASE_URL=https://vscode-internal-28615-beta.beta01.cloud.kavia.ai:3001
-  WRONG: BACKEND_PUBLIC_BASE_URL=https://vscode-internal-28615-beta.beta01.cloud.kavia.ai:3001/docs  <- contains a path and will be stripped
+  BACKEND_PUBLIC_BASE_URL=https://vscode-internal-18211-beta.beta01.cloud.kavia.ai:3001
+  WRONG: BACKEND_PUBLIC_BASE_URL=https://vscode-internal-18211-beta.beta01.cloud.kavia.ai:3001/docs  <- contains a path and will be stripped
   The backend will compute:
-  redirect_uri=https://vscode-internal-28615-beta.beta01.cloud.kavia.ai:3001/api/oauth/atlassian/callback
+  redirect_uri=https://vscode-internal-18211-beta.beta01.cloud.kavia.ai:3001/api/oauth/atlassian/callback
 - You can verify at runtime via:
   GET {BACKEND_PUBLIC_BASE_URL}/api/config -> field "redirectUri" must match what you registered in Atlassian.
 - See integration_backend/.env.example for variables.

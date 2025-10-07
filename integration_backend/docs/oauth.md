@@ -24,7 +24,7 @@ Jira (legacy/non-PKCE) OAuth variables:
 - JIRA_OAUTH_CLIENT_SECRET
 - JIRA_OAUTH_REDIRECT_URI
   Set this to the provided callback URL:
-  https://vscode-internal-28615-beta.beta01.cloud.kavia.ai:4000/oauth/jira
+  https://vscode-internal-18211-beta.beta01.cloud.kavia.ai:4000/oauth/jira
 
 Security notes:
 - This demo uses an in-memory session store. Replace with Redis for production.

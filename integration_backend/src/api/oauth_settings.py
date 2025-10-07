@@ -120,11 +120,24 @@ def get_default_scopes() -> str:
 
 # PUBLIC_INTERFACE
 def get_cors_origins() -> List[str]:
-    """Parse BACKEND_CORS_ORIGINS env var into list of origins for CORS."""
+    """Parse BACKEND_CORS_ORIGINS env var into list of origins for CORS.
+
+    Behavior:
+    - BACKEND_CORS_ORIGINS: comma-separated list of origins. Example:
+        BACKEND_CORS_ORIGINS=https://frontend.example.com,http://localhost:3000
+    - If empty, default to ["http://localhost:3000"] for local development.
+    - If FRONTEND_BASE_URL or NEXT_PUBLIC_FRONTEND_BASE_URL are present, include them.
+    - Never return ["*"] when cookies/sessions may be used, because allow_credentials=True
+      cannot be combined with wildcard origins.
+    """
     raw = os.getenv("BACKEND_CORS_ORIGINS", "")
-    origins = [o.strip() for o in raw.split(",") if o.strip()]
+    origins = [o.strip().rstrip("/") for o in raw.split(",") if o.strip()]
+    # Include detected frontend origins from env
+    for key in ("FRONTEND_BASE_URL", "NEXT_PUBLIC_FRONTEND_BASE_URL"):
+        v = os.getenv(key, "").strip().rstrip("/")
+        if v and v not in origins:
+            origins.append(v)
     if not origins:
-        # Explicitly avoid localhost defaults; require env to be set in cloud
-        # Fallback to '*' only for unrestricted previews. Prefer setting BACKEND_CORS_ORIGINS.
-        origins = ["*"]
+        # Safe default for local dev; cloud previews must set BACKEND_CORS_ORIGINS explicitly
+        origins = ["http://localhost:3000"]
     return origins

@@ -56,9 +56,11 @@ def create_app() -> FastAPI:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=allowed_origins,
-        allow_credentials=False,
-        allow_methods=["GET", "OPTIONS", "POST"],
+        allow_credentials=True,  # OAuth flow uses httpOnly cookie 'sid'
+        allow_methods=["*"],
         allow_headers=["*"],
+        expose_headers=["*"],
+        max_age=600,
     )
 
     # Routers (ensure /auth/jira and related endpoints are registered)

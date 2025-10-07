@@ -4,6 +4,7 @@ This minimal Next.js frontend includes a simple connect flow for Atlassian/Jira 
 
 Environment variables:
 - NEXT_PUBLIC_BACKEND_URL: Absolute URL to the running backend (e.g., https://vscode-internal-XXXXX-beta.beta01.cloud.kavia.ai:3001)
+  Required for cloud previews where frontend and backend are on different hosts. The frontend will prefer this value.
 
 Pages:
 - /connect: Preferred return page for the OAuth flow. Start login using:
