@@ -41,9 +41,6 @@ def create_app() -> FastAPI:
 
     # CORS: Use env-driven allowlist, and explicitly include the preview frontend origin.
     allowed_origins = get_cors_origins()
-    frontend_preview_origin = "https://vscode-internal-36910-beta.beta01.cloud.kavia.ai:4000"
-    if frontend_preview_origin not in allowed_origins and "*" not in allowed_origins:
-        allowed_origins = allowed_origins + [frontend_preview_origin]
 
     # For simple GET to /auth/jira returning JSON, no credentials are required.
     # CORS must be added BEFORE route inclusion so responses include Access-Control-Allow-Origin.

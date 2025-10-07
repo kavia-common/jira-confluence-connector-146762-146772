@@ -21,6 +21,7 @@ import os
 from typing import List
 
 _logger = logging.getLogger("config.oauth")
+from .config_public import get_public_base_url, get_atlassian_redirect_uri as _central_redirect
 
 
 def _normalize_base(url: str) -> str:
@@ -70,68 +71,32 @@ def get_atlassian_oauth_config() -> dict:
     """Return a dict of Atlassian OAuth config from env.
 
     Behavior:
-    - Prefer constructing redirect_uri as BACKEND_PUBLIC_BASE_URL + '/api/oauth/atlassian/callback'
-    - If ATLASSIAN_REDIRECT_URI is set, validate it matches the constructed one and log a warning on mismatch.
+    - Prefer centralized helpers to compute backend base and redirect_uri.
+    - Default callback path is '/api/oauth/atlassian/callback'.
     """
-    raw_backend_public_base = os.getenv("BACKEND_PUBLIC_BASE_URL", "").strip() or os.getenv("BACKEND_BASE_URL", "").strip()
-    # Normalize and detect if path existed
-    backend_public_base = _normalize_base(raw_backend_public_base)
-    if raw_backend_public_base and raw_backend_public_base.rstrip("/") != backend_public_base.rstrip("/"):
-        _logger.warning(
-            "Adjusted BACKEND_PUBLIC_BASE_URL from '%s' to origin '%s' to avoid path segments breaking Atlassian redirect_uri matching.",
-            raw_backend_public_base,
-            backend_public_base,
-        )
-    constructed_redirect = _build_redirect_uri_from_base(backend_public_base)
-
-    env_redirect = os.getenv("ATLASSIAN_REDIRECT_URI", "").strip()
-    # Choose redirect_uri:
-    # - If we have a constructed one, use it as source of truth
-    # - Else fall back to env_redirect (legacy)
-    chosen_redirect = constructed_redirect or env_redirect
+    backend_public_base = get_public_base_url()
+    # Prefer centralized computed redirect; falls back to env if set explicitly
+    redirect_uri = _central_redirect()
 
     cfg = {
         "client_id": os.getenv("ATLASSIAN_CLIENT_ID", "").strip(),
         "client_secret": os.getenv("ATLASSIAN_CLIENT_SECRET", "").strip(),
-        "redirect_uri": chosen_redirect,
+        "redirect_uri": redirect_uri,
         "scopes": os.getenv("ATLASSIAN_SCOPES", "").strip(),
         "backend_base_url": backend_public_base,
         "frontend_url": os.getenv("FRONTEND_BASE_URL", "").strip(),
     }
 
-    # Validation and diagnostics
     redacted_client = (cfg["client_id"][:4] + "...") if cfg["client_id"] else ""
-    mismatch_note = ""
-    if constructed_redirect and env_redirect and constructed_redirect != env_redirect:
-        mismatch_note = f" (WARNING: ATLASSIAN_REDIRECT_URI env value '{env_redirect}' does not match constructed '{constructed_redirect}'; using constructed value.)"
-        _logger.warning(
-            "Configured ATLASSIAN_REDIRECT_URI (%s) differs from constructed from BACKEND_PUBLIC_BASE_URL (%s). Using constructed value.",
-            env_redirect,
-            constructed_redirect,
-        )
-
     _logger.info(
-        "OAuth config loaded: client_id=%s, redirect_uri=%s, scopes_set=%s, backend_public_base=%s, frontend_base=%s%s",
+        "OAuth config loaded: client_id=%s, redirect_uri=%s, scopes_set=%s, backend_public_base=%s, frontend_base=%s",
         redacted_client,
         cfg["redirect_uri"],
         bool(cfg["scopes"]),
         cfg["backend_base_url"],
         cfg["frontend_url"],
-        mismatch_note,
     )
-    if cfg["backend_base_url"]:
-        _logger.info(
-            "Computed Atlassian redirect_uri from origin: %s",
-            constructed_redirect or "",
-        )
-    if env_redirect and constructed_redirect and env_redirect != constructed_redirect:
-        _logger.warning(
-            "ATLASSIAN_REDIRECT_URI ('%s') differs from computed redirect_uri ('%s'). Atlassian must be configured with the computed value.",
-            env_redirect,
-            constructed_redirect,
-        )
 
-    # Fail-fast hints in logs if critical values missing (routes will still raise HTTPException)
     if not cfg["client_id"]:
         _logger.error("Missing ATLASSIAN_CLIENT_ID in environment.")
     if not cfg["redirect_uri"]:

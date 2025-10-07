@@ -15,6 +15,11 @@ Redirect URI registration:
   Example:
   https://your-backend.example.com/api/oauth/atlassian/callback
 
+Centralized configuration:
+- get_public_base_url() reads BACKEND_PUBLIC_BASE_URL (origin-only) and normalizes it.
+- get_atlassian_redirect_uri() returns ATLASSIAN_REDIRECT_URI if set; otherwise derives:
+  {BACKEND_PUBLIC_BASE_URL}/api/oauth/atlassian/callback
+
 Only the standardized callback is supported. Legacy aliases like /api/oauth/callback/jira have been removed.
 
 Notes:
