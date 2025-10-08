@@ -129,6 +129,15 @@ ATLASSIAN_BASE_ENV_CANDIDATES: List[str] = [
     "NEXT_PUBLIC_ATLASSIAN_CLOUD_BASE_URL",
 ]
 
+# Base URL that represents the externally reachable backend origin used to build redirect URIs
+PUBLIC_BASE_URL_ENV_CANDIDATES: List[str] = [
+    "PUBLIC_BASE_URL",
+    "BACKEND_PUBLIC_BASE_URL",
+    "NEXT_PUBLIC_BACKEND_PUBLIC_BASE_URL",
+    "NEXT_PUBLIC_BACKEND_BASE_URL",
+    "NEXT_PUBLIC_BACKEND_URL",
+]
+
 
 def _resolve_env(names: List[str]) -> Tuple[str, Optional[str]]:
     """
@@ -173,6 +182,19 @@ def _analyze_url(uri: str) -> Dict[str, Optional[str]]:
     except Exception:
         return {"valid": "false", "scheme": "", "netloc": "", "path": "", "reason": "parse_error"}
 
+def _build_public_url(base: str, path: str) -> str:
+    """
+    Build an absolute URL from a base (e.g., https://host:port) and path (e.g., /auth/jira/callback).
+    Ensures exactly one slash between base and path.
+    """
+    base = (base or "").strip()
+    path = (path or "").strip()
+    if not base:
+        return ""
+    if not path.startswith("/"):
+        path = "/" + path
+    return base.rstrip("/") + path
+
 
 class Settings(BaseModel):
     """
@@ -190,6 +212,9 @@ class Settings(BaseModel):
 
     # Atlassian base
     atlassian_base_url: Optional[str] = Field(default=_env_first("ATLASSIAN_CLOUD_BASE_URL", "NEXT_PUBLIC_ATLASSIAN_CLOUD_BASE_URL"))
+
+    # Public base URL for this backend (external origin)
+    public_base_url: Optional[str] = Field(default=_env_first(*PUBLIC_BASE_URL_ENV_CANDIDATES))
 
     # Jira OAuth (STRICT: redirect_uri must exactly match Atlassian console)
     jira_client_id: Optional[str] = Field(default=_env_first("JIRA_OAUTH_CLIENT_ID", "ATLASSIAN_CLIENT_ID", "NEXT_PUBLIC_JIRA_OAUTH_CLIENT_ID", "NEXT_PUBLIC_JIRA_CLIENT_ID", "NEXT_PUBLIC_ATLASSIAN_CLIENT_ID"))
@@ -224,10 +249,17 @@ def get_atlassian_base_url() -> str:
 # PUBLIC_INTERFACE
 def get_jira_oauth_config() -> Dict[str, str]:
     """Return Jira OAuth 2.0 config from the environment with robust fallbacks."""
+    explicit_redirect = (_SETTINGS.jira_redirect_uri or "").strip()
+    redirect_uri = explicit_redirect
+    # If not explicitly set, try to build from PUBLIC_BASE_URL
+    if not redirect_uri:
+        pub_base = (_SETTINGS.public_base_url or "").strip()
+        built = _build_public_url(pub_base, "/auth/jira/callback") if pub_base else ""
+        redirect_uri = built
     return {
         "client_id": (_SETTINGS.jira_client_id or "").strip(),
         "client_secret": (_SETTINGS.jira_client_secret or "").strip(),
-        "redirect_uri": (_SETTINGS.jira_redirect_uri or "").strip(),
+        "redirect_uri": redirect_uri,
         "base_url": get_atlassian_base_url(),
         "dev_mode": str(_SETTINGS.dev_mode).lower(),
         "app_env": (_SETTINGS.app_env or "production").strip(),
@@ -241,10 +273,16 @@ def get_confluence_oauth_config() -> Dict[str, str]:
     Return Confluence OAuth 2.0 config from the environment.
     Falls back to Jira or generic Atlassian config if dedicated Confluence values are not provided.
     """
+    explicit_redirect = (_SETTINGS.confluence_redirect_uri or "").strip()
+    redirect_uri = explicit_redirect
+    if not redirect_uri:
+        pub_base = (_SETTINGS.public_base_url or "").strip()
+        built = _build_public_url(pub_base, "/auth/confluence/callback") if pub_base else ""
+        redirect_uri = built
     return {
         "client_id": (_SETTINGS.confluence_client_id or "").strip(),
         "client_secret": (_SETTINGS.confluence_client_secret or "").strip(),
-        "redirect_uri": (_SETTINGS.confluence_redirect_uri or "").strip(),
+        "redirect_uri": redirect_uri,
         "base_url": get_atlassian_base_url(),
         "dev_mode": str(_SETTINGS.dev_mode).lower(),
         "app_env": (_SETTINGS.app_env or "production").strip(),
@@ -297,6 +335,17 @@ def get_jira_oauth_env_debug() -> Dict[str, Dict[str, str]]:
     redirect_val, redirect_src = _resolve_env(JIRA_REDIRECT_ENV_CANDIDATES)
     frontend_val, frontend_src = _resolve_env(FRONTEND_URL_ENV_CANDIDATES)
     base_val, base_src = _resolve_env(ATLASSIAN_BASE_ENV_CANDIDATES)
+    public_base_val, public_base_src = _resolve_env(PUBLIC_BASE_URL_ENV_CANDIDATES)
+
+    # Determine the effective redirect URI that will be used by get_jira_oauth_config()
+    explicit_redirect = redirect_val.strip() if redirect_val else ""
+    if explicit_redirect:
+        effective_redirect = explicit_redirect
+        effective_source = redirect_src or ""
+    else:
+        built = _build_public_url(public_base_val, "/auth/jira/callback") if public_base_val else ""
+        effective_redirect = built
+        effective_source = public_base_src or ""
 
     return {
         "client_id": {
@@ -310,10 +359,15 @@ def get_jira_oauth_env_debug() -> Dict[str, Dict[str, str]]:
             "value_masked": _mask_secret(client_secret_val),
         },
         "redirect_uri": {
-            "present": str(bool(redirect_val)).lower(),
-            "source": redirect_src or "",
-            "value_masked": _mask_secret(redirect_val),
-            "analysis": _analyze_url(redirect_val) if redirect_val else {"valid": "false", "reason": "empty"},
+            "present": str(bool(effective_redirect)).lower(),
+            "source": effective_source,
+            "value_masked": _mask_secret(effective_redirect),
+            "analysis": _analyze_url(effective_redirect) if effective_redirect else {"valid": "false", "reason": "empty"},
+        },
+        "public_base_url": {
+            "present": str(bool(public_base_val)).lower(),
+            "source": public_base_src or "",
+            "value_masked": _mask_secret(public_base_val),
         },
         "frontend_url": {
             "present": str(bool(frontend_val)).lower(),
