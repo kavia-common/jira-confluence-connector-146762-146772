@@ -106,3 +106,41 @@ Environment fallback mapping:
   - Replace the demo "first user" selection with real user context (e.g., session or JWT).
   - Implement state verification for OAuth flows.
   - Implement token refresh using Atlassian "refresh_token" before expiry.
+
+---
+
+## Diagnostics and request tracing
+
+To improve observability for OAuth flows and diagnose 502/500s, the backend includes structured logging and request ID correlation:
+
+- Each incoming request is assigned an X-Request-ID (uuid4) if not provided by the client. The value is:
+  - Exposed to handlers via `request.state.request_id`
+  - Added to all structured log lines
+  - Echoed back in the response header `X-Request-ID`
+
+- Logs are emitted in JSON-like structured lines with fields including:
+  - timestamp, level, logger, event
+  - request_id, provider, path, method
+  - query_params (with sensitive fields redacted)
+  - a safe subset of headers (User-Agent, X-Forwarded-For, etc., non-sensitive)
+  - additional context (e.g., token exchange HTTP status, redirect targets without secrets)
+
+- OAuth routes log key steps:
+  - oauth_login_start, oauth_login_redirect
+  - oauth_callback_received, token_exchange_start
+  - token_exchange_response (status only), token_exchange_success (no tokens)
+  - oauth_user_token_persisted, frontend_redirect
+  - Any errors are logged with stack traces and the request_id for correlation.
+
+- Sensitive values are never logged:
+  - The following query/header fields are redacted: code, state, token, access_token, refresh_token, id_token, client_secret, authorization, cookie.
+
+- You can control the log level with the `LOG_LEVEL` env var (default `INFO`).
+
+Example: set and trace a custom Request ID with curl
+```
+curl -H "X-Request-ID: my-debug-123" "http://localhost:3001/api/auth/jira/callback?code=...&state=..."
+# Inspect backend logs and filter by "request_id":"my-debug-123"
+```
+
+Use the `X-Request-ID` value returned by the backend in error responses (500) to quickly locate the associated logs when filing support tickets or debugging issues.
