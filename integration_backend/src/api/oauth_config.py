@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import os
 import urllib.parse
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple, List
 from pydantic import BaseModel, Field
 
 
@@ -32,6 +32,81 @@ def _env_first(*names: str) -> str:
         if val and val.strip():
             return val.strip()
     return ""
+
+
+# Candidate env var names used for resolution and debug visibility
+JIRA_ID_ENV_CANDIDATES: List[str] = [
+    "JIRA_OAUTH_CLIENT_ID",
+    "ATLASSIAN_CLIENT_ID",
+    "NEXT_PUBLIC_JIRA_OAUTH_CLIENT_ID",
+    "NEXT_PUBLIC_JIRA_CLIENT_ID",
+    "NEXT_PUBLIC_ATLASSIAN_CLIENT_ID",
+]
+JIRA_SECRET_ENV_CANDIDATES: List[str] = [
+    "JIRA_OAUTH_CLIENT_SECRET",
+    "ATLASSIAN_CLIENT_SECRET",
+    "NEXT_PUBLIC_JIRA_OAUTH_CLIENT_SECRET",
+    "NEXT_PUBLIC_ATLASSIAN_CLIENT_SECRET",
+]
+JIRA_REDIRECT_ENV_CANDIDATES: List[str] = [
+    "JIRA_OAUTH_REDIRECT_URI",
+    "ATLASSIAN_REDIRECT_URI",
+    "NEXT_PUBLIC_JIRA_OAUTH_REDIRECT_URI",
+    "NEXT_PUBLIC_ATLASSIAN_REDIRECT_URI",
+]
+FRONTEND_URL_ENV_CANDIDATES: List[str] = [
+    "APP_FRONTEND_URL",
+    "NEXT_PUBLIC_APP_FRONTEND_URL",
+    "NEXT_PUBLIC_FRONTEND_BASE_URL",
+]
+ATLASSIAN_BASE_ENV_CANDIDATES: List[str] = [
+    "ATLASSIAN_CLOUD_BASE_URL",
+    "NEXT_PUBLIC_ATLASSIAN_CLOUD_BASE_URL",
+]
+
+
+def _resolve_env(names: List[str]) -> Tuple[str, Optional[str]]:
+    """
+    Resolve the first non-empty env value from a list and return (value, source_env_name).
+    """
+    for name in names:
+        raw = os.getenv(name)
+        if raw is None:
+            continue
+        val = raw.strip()
+        if val:
+            return val, name
+    return "", None
+
+
+def _mask_secret(value: Optional[str], keep: int = 4) -> str:
+    """
+    Mask a secret, leaving only the last 'keep' characters visible.
+    """
+    if not value:
+        return ""
+    if len(value) <= keep:
+        return "*" * len(value)
+    return "*" * (len(value) - keep) + value[-keep:]
+
+
+def _analyze_url(uri: str) -> Dict[str, Optional[str]]:
+    """
+    Provide a non-blocking analysis of a URL for debug logs (never raises).
+    """
+    try:
+        parsed = urllib.parse.urlparse(uri)
+        valid = bool(parsed.scheme and parsed.netloc)
+        reason = None if valid else "missing scheme or host"
+        return {
+            "valid": str(valid).lower(),
+            "scheme": parsed.scheme or "",
+            "netloc": parsed.netloc or "",
+            "path": parsed.path or "",
+            "reason": reason,
+        }
+    except Exception:
+        return {"valid": "false", "scheme": "", "netloc": "", "path": "", "reason": "parse_error"}
 
 
 class Settings(BaseModel):
@@ -143,3 +218,48 @@ def build_atlassian_authorize_url(client_id: str, redirect_uri: str, scopes: str
     if state:
         params["state"] = state
     return f"{base}?{urllib.parse.urlencode(params)}"
+
+
+# PUBLIC_INTERFACE
+def get_jira_oauth_env_debug() -> Dict[str, Dict[str, str]]:
+    """
+    Return masked, source-aware Jira OAuth env resolution for diagnostics.
+
+    This does not expose raw secrets; values are masked and redirect_uri is analyzed non-blockingly.
+    """
+    client_id_val, client_id_src = _resolve_env(JIRA_ID_ENV_CANDIDATES)
+    client_secret_val, client_secret_src = _resolve_env(JIRA_SECRET_ENV_CANDIDATES)
+    redirect_val, redirect_src = _resolve_env(JIRA_REDIRECT_ENV_CANDIDATES)
+    frontend_val, frontend_src = _resolve_env(FRONTEND_URL_ENV_CANDIDATES)
+    base_val, base_src = _resolve_env(ATLASSIAN_BASE_ENV_CANDIDATES)
+
+    return {
+        "client_id": {
+            "present": str(bool(client_id_val)).lower(),
+            "source": client_id_src or "",
+            "value_masked": _mask_secret(client_id_val),
+        },
+        "client_secret": {
+            "present": str(bool(client_secret_val)).lower(),
+            "source": client_secret_src or "",
+            "value_masked": _mask_secret(client_secret_val),
+        },
+        "redirect_uri": {
+            "present": str(bool(redirect_val)).lower(),
+            "source": redirect_src or "",
+            "value_masked": _mask_secret(redirect_val),
+            "analysis": _analyze_url(redirect_val) if redirect_val else {"valid": "false", "reason": "empty"},
+        },
+        "frontend_url": {
+            "present": str(bool(frontend_val)).lower(),
+            "source": frontend_src or "",
+            "value_masked": _mask_secret(frontend_val),
+        },
+        "atlassian_base_url": {
+            "present": str(bool(base_val)).lower(),
+            "source": base_src or "",
+            "value_masked": _mask_secret(base_val),
+        },
+        "app_env": (_SETTINGS.app_env or "production"),
+        "dev_mode": str(_SETTINGS.dev_mode).lower(),
+    }

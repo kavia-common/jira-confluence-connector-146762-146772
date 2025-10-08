@@ -29,6 +29,7 @@ from src.api.oauth_config import (
     get_confluence_oauth_config,
     get_frontend_base_url_default,
     build_atlassian_authorize_url,
+    get_jira_oauth_env_debug,
 )
 
 from src.api.schemas import (
@@ -365,33 +366,78 @@ def jira_login(request: Request, state: Optional[str] = None, scope: Optional[st
         app_env = (cfg.get("app_env") or "production").lower()
         dev_mode = str(cfg.get("dev_mode") or "").lower() in ("true", "1", "yes")
 
-        # Strict requirement: all must be present and redirect_uri must EXACTLY match Atlassian console
-        missing_flags = {
-            "client_id": bool(client_id),
-            "client_secret": bool(client_secret),
-            "redirect_uri": bool(redirect_uri),
+        # Presence flags and derived missing map (True means the field is missing)
+        presence = {
+            "client_id_present": bool(client_id),
+            "client_secret_present": bool(client_secret),
+            "redirect_uri_present": bool(redirect_uri),
         }
-        if not all(missing_flags.values()):
+        missing = {k.replace("_present", ""): not v for k, v in presence.items()}
+
+        # Prepare masked, source-aware debug details (do not log raw values)
+        env_debug = get_jira_oauth_env_debug()
+
+        if any(missing.values()):
+            reasons = []
+            if missing.get("client_id"):
+                reasons.append("client_id not set or empty")
+            if missing.get("client_secret"):
+                reasons.append("client_secret not set or empty")
+            if missing.get("redirect_uri"):
+                reasons.append("redirect_uri not set or empty")
+
+            # In dev, return a mock URL to keep UX flowing while surfacing misconfig
             if dev_mode or app_env == "development":
                 mock_url = "https://auth.atlassian.com/authorize?mock=true"
-                _log_event(logging.WARNING, "oauth_login_mock_dev", request, provider=provider, mock_redirect=mock_url, missing=missing_flags)
+                _log_event(
+                    logging.WARNING,
+                    "oauth_login_mock_dev",
+                    request,
+                    provider=provider,
+                    mock_redirect=mock_url,
+                    missing=missing,
+                    env_debug=env_debug,
+                    reasons=reasons,
+                )
                 return JSONResponse(
                     status_code=200,
-                    content={"url": mock_url, "provider": provider, "dev": True, "missing": {k: v for k, v in missing_flags.items()}},
+                    content={
+                        "url": mock_url,
+                        "provider": provider,
+                        "dev": True,
+                        "missing": missing,
+                        "details": {"reasons": reasons, "env_sources": {
+                            "client_id": env_debug["client_id"]["source"],
+                            "client_secret": env_debug["client_secret"]["source"],
+                            "redirect_uri": env_debug["redirect_uri"]["source"],
+                        }},
+                    },
                 )
+
             _log_event(
                 logging.ERROR,
                 "oauth_login_config_error",
                 request,
                 provider=provider,
-                missing=missing_flags,
+                missing=missing,
+                env_debug=env_debug,
+                reasons=reasons,
             )
             return JSONResponse(
                 status_code=400,
                 content={
                     "status": "error",
-                    "message": "Jira OAuth is not fully configured. Set JIRA_OAUTH_CLIENT_ID, JIRA_OAUTH_CLIENT_SECRET, and JIRA_OAUTH_REDIRECT_URI. Redirect URI must exactly match Atlassian app settings.",
-                    "missing": missing_flags,
+                    "message": "Jira OAuth is not fully configured. Provide JIRA_OAUTH_CLIENT_ID, JIRA_OAUTH_CLIENT_SECRET, and JIRA_OAUTH_REDIRECT_URI (exact value from Atlassian app).",
+                    "missing": missing,
+                    "details": {
+                        "reasons": reasons,
+                        "env_sources": {
+                            "client_id": env_debug["client_id"]["source"],
+                            "client_secret": env_debug["client_secret"]["source"],
+                            "redirect_uri": env_debug["redirect_uri"]["source"],
+                        },
+                        "redirect_uri_analysis": env_debug["redirect_uri"].get("analysis", {}),
+                    },
                 },
             )
 
@@ -403,7 +449,10 @@ def jira_login(request: Request, state: Optional[str] = None, scope: Optional[st
         ]
         scopes = scope or " ".join(default_scopes)
 
-        # Build authorize URL using EXACT redirect_uri from env
+        # Non-blocking analysis for observability
+        redirect_analysis = env_debug["redirect_uri"].get("analysis", {})
+
+        # Build authorize URL using EXACT redirect_uri from env (no normalization)
         url = build_atlassian_authorize_url(client_id=client_id, redirect_uri=redirect_uri, scopes=scopes, state=state)
         _log_event(
             logging.INFO,
@@ -414,6 +463,12 @@ def jira_login(request: Request, state: Optional[str] = None, scope: Optional[st
             has_state=bool(state),
             scope_count=(len(scopes.split()) if scopes else 0),
             configured_redirect_uri_present=bool(redirect_uri),
+            redirect_uri_analysis=redirect_analysis,
+            env_sources={
+                "client_id": env_debug["client_id"]["source"],
+                "client_secret": env_debug["client_secret"]["source"],
+                "redirect_uri": env_debug["redirect_uri"]["source"],
+            },
         )
         # Return 200 with the URL for clients to navigate
         return JSONResponse(status_code=200, content={"url": url})
