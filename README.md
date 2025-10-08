@@ -38,8 +38,8 @@ Now supports OAuth 2.0 (3LO) for Atlassian (Jira/Confluence):
 ### Configuration and error handling improvements
 - Centralized settings via environment variables; see `.env.example`.
 - When Jira OAuth is not configured:
-  - In production: `/auth/jira/login` returns 400 with a clear message (no 500s).
-  - In development (`APP_ENV=development` or `DEV_MODE=true`): `/auth/jira/login` returns 200 with a mock redirect URL to keep previews working.
+  - In production: `/auth/jira/login` returns 400 with a clear message and granular "missing" flags for client_id, client_secret, and redirect_uri (no 500s).
+  - In development (`APP_ENV=development` or `DEV_MODE=true`): `/auth/jira/login` returns 200 with a mock redirect URL and includes the "missing" flags to keep previews working while signaling misconfiguration.
 - CORS can be controlled via `BACKEND_CORS_ORIGINS` (comma separated). Defaults to allowing all in dev.
 - Global exception handler sanitizes unhandled errors and includes `X-Request-ID` in responses and logs.
 
@@ -66,12 +66,20 @@ Now supports OAuth 2.0 (3LO) for Atlassian (Jira/Confluence):
   - GET /auth/confluence/callback
 
 ### OAuth 2.0 Configuration (Atlassian)
-Set the following environment variables (see `.env.example`):
+Set the following environment variables (see `integration_backend/.env.example`):
 - ATLASSIAN_CLOUD_BASE_URL: e.g., https://your-team.atlassian.net
 - JIRA_OAUTH_CLIENT_ID, JIRA_OAUTH_CLIENT_SECRET
 - JIRA_OAUTH_REDIRECT_URI: e.g., https://yourapp.com/api/auth/jira/callback
   IMPORTANT: Must exactly match what's registered in Atlassian. For this deployment it must be:
   https://vscode-internal-13311-beta.beta01.cloud.kavia.ai:3001/auth/jira/callback
+
+Required Jira OAuth variables:
+- JIRA_OAUTH_CLIENT_ID
+- JIRA_OAUTH_CLIENT_SECRET
+- JIRA_OAUTH_REDIRECT_URI
+
+If any of these are missing, /auth/jira/login will return 400 with a granular "missing" flags payload:
+{"missing":{"client_id":false,"client_secret":true,"redirect_uri":true}}
 - Optional for Confluence if using separate app:
   - CONFLUENCE_OAUTH_CLIENT_ID, CONFLUENCE_OAUTH_CLIENT_SECRET
   - CONFLUENCE_OAUTH_REDIRECT_URI

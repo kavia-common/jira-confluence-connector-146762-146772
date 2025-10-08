@@ -360,32 +360,38 @@ def jira_login(request: Request, state: Optional[str] = None, scope: Optional[st
 
         cfg = get_jira_oauth_config()
         client_id = (cfg.get("client_id") or "").strip()
+        client_secret = (cfg.get("client_secret") or "").strip()
         redirect_uri = (cfg.get("redirect_uri") or "").strip()
         app_env = (cfg.get("app_env") or "production").lower()
         dev_mode = str(cfg.get("dev_mode") or "").lower() in ("true", "1", "yes")
 
-        # Strict requirement: redirect_uri must be provided and EXACTLY match what's registered in Atlassian
-        if not client_id or not redirect_uri:
+        # Strict requirement: all must be present and redirect_uri must EXACTLY match Atlassian console
+        missing_flags = {
+            "client_id": bool(client_id),
+            "client_secret": bool(client_secret),
+            "redirect_uri": bool(redirect_uri),
+        }
+        if not all(missing_flags.values()):
             if dev_mode or app_env == "development":
                 mock_url = "https://auth.atlassian.com/authorize?mock=true"
-                _log_event(logging.WARNING, "oauth_login_mock_dev", request, provider=provider, mock_redirect=mock_url)
+                _log_event(logging.WARNING, "oauth_login_mock_dev", request, provider=provider, mock_redirect=mock_url, missing=missing_flags)
                 return JSONResponse(
                     status_code=200,
-                    content={"url": mock_url, "provider": provider, "dev": True},
+                    content={"url": mock_url, "provider": provider, "dev": True, "missing": {k: v for k, v in missing_flags.items()}},
                 )
             _log_event(
                 logging.ERROR,
                 "oauth_login_config_error",
                 request,
                 provider=provider,
-                missing={"client_id": bool(client_id), "redirect_uri": bool(redirect_uri)},
+                missing=missing_flags,
             )
             return JSONResponse(
                 status_code=400,
                 content={
                     "status": "error",
-                    "message": "Jira OAuth is not fully configured. Ensure JIRA_OAUTH_CLIENT_ID and JIRA_OAUTH_REDIRECT_URI are set and match Atlassian exactly.",
-                    "missing": {"client_id": bool(client_id), "redirect_uri": bool(redirect_uri)},
+                    "message": "Jira OAuth is not fully configured. Set JIRA_OAUTH_CLIENT_ID, JIRA_OAUTH_CLIENT_SECRET, and JIRA_OAUTH_REDIRECT_URI. Redirect URI must exactly match Atlassian app settings.",
+                    "missing": missing_flags,
                 },
             )
 

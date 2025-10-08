@@ -122,7 +122,8 @@ def get_frontend_base_url_default() -> str:
 def is_jira_oauth_configured() -> bool:
     """Quick boolean check to determine if Jira OAuth has required fields."""
     cfg = get_jira_oauth_config()
-    return bool(cfg.get("client_id")) and bool(cfg.get("redirect_uri"))
+    # Require client_id, client_secret, and redirect_uri
+    return bool(cfg.get("client_id")) and bool(cfg.get("client_secret")) and bool(cfg.get("redirect_uri"))
 
 
 # PUBLIC_INTERFACE
