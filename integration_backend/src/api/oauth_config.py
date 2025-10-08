@@ -113,12 +113,18 @@ JIRA_SECRET_ENV_CANDIDATES: List[str] = [
     "NEXT_PUBLIC_JIRA_OAUTH_CLIENT_SECRET",
     "NEXT_PUBLIC_ATLASSIAN_CLIENT_SECRET",
 ]
-JIRA_REDIRECT_ENV_CANDIDATES: List[str] = [
-    "JIRA_OAUTH_REDIRECT_URI",
-    "ATLASSIAN_REDIRECT_URI",
-    "NEXT_PUBLIC_JIRA_OAUTH_REDIRECT_URI",
+# Canonical Atlassian redirect URI env candidates (preferred first)
+ATLASSIAN_REDIRECT_ENV_CANDIDATES: List[str] = [
+    "ATLASSIAN_OAUTH_REDIRECT_URI",  # primary canonical
+    "ATLASSIAN_REDIRECT_URI",        # legacy/alias
+    "JIRA_OAUTH_REDIRECT_URI",       # provider-specific fallback
+    "CONFLUENCE_OAUTH_REDIRECT_URI", # provider-specific fallback
     "NEXT_PUBLIC_ATLASSIAN_REDIRECT_URI",
+    "NEXT_PUBLIC_JIRA_OAUTH_REDIRECT_URI",
+    "NEXT_PUBLIC_CONFLUENCE_OAUTH_REDIRECT_URI",
 ]
+# Retain legacy list name for debug source mapping but point to canonical list
+JIRA_REDIRECT_ENV_CANDIDATES: List[str] = ATLASSIAN_REDIRECT_ENV_CANDIDATES
 FRONTEND_URL_ENV_CANDIDATES: List[str] = [
     "APP_FRONTEND_URL",
     "NEXT_PUBLIC_APP_FRONTEND_URL",
@@ -219,12 +225,13 @@ class Settings(BaseModel):
     # Jira OAuth (STRICT: redirect_uri must exactly match Atlassian console)
     jira_client_id: Optional[str] = Field(default=_env_first("JIRA_OAUTH_CLIENT_ID", "ATLASSIAN_CLIENT_ID", "NEXT_PUBLIC_JIRA_OAUTH_CLIENT_ID", "NEXT_PUBLIC_JIRA_CLIENT_ID", "NEXT_PUBLIC_ATLASSIAN_CLIENT_ID"))
     jira_client_secret: Optional[str] = Field(default=_env_first("JIRA_OAUTH_CLIENT_SECRET", "ATLASSIAN_CLIENT_SECRET", "NEXT_PUBLIC_JIRA_OAUTH_CLIENT_SECRET", "NEXT_PUBLIC_ATLASSIAN_CLIENT_SECRET"))
-    jira_redirect_uri: Optional[str] = Field(default=_env_first("JIRA_OAUTH_REDIRECT_URI", "ATLASSIAN_REDIRECT_URI", "NEXT_PUBLIC_JIRA_OAUTH_REDIRECT_URI", "NEXT_PUBLIC_ATLASSIAN_REDIRECT_URI"))
+    # Prefer a single canonical redirect for all Atlassian providers
+    jira_redirect_uri: Optional[str] = Field(default=_env_first("ATLASSIAN_OAUTH_REDIRECT_URI", "ATLASSIAN_REDIRECT_URI", "JIRA_OAUTH_REDIRECT_URI", "NEXT_PUBLIC_ATLASSIAN_REDIRECT_URI", "NEXT_PUBLIC_JIRA_OAUTH_REDIRECT_URI"))
 
     # Confluence OAuth
     confluence_client_id: Optional[str] = Field(default=_env_first("CONFLUENCE_OAUTH_CLIENT_ID", "JIRA_OAUTH_CLIENT_ID", "ATLASSIAN_CLIENT_ID", "NEXT_PUBLIC_CONFLUENCE_OAUTH_CLIENT_ID", "NEXT_PUBLIC_JIRA_OAUTH_CLIENT_ID", "NEXT_PUBLIC_JIRA_CLIENT_ID", "NEXT_PUBLIC_ATLASSIAN_CLIENT_ID"))
     confluence_client_secret: Optional[str] = Field(default=_env_first("CONFLUENCE_OAUTH_CLIENT_SECRET", "JIRA_OAUTH_CLIENT_SECRET", "ATLASSIAN_CLIENT_SECRET", "NEXT_PUBLIC_CONFLUENCE_OAUTH_CLIENT_SECRET", "NEXT_PUBLIC_JIRA_OAUTH_CLIENT_SECRET", "NEXT_PUBLIC_ATLASSIAN_CLIENT_SECRET"))
-    confluence_redirect_uri: Optional[str] = Field(default=_env_first("CONFLUENCE_OAUTH_REDIRECT_URI", "JIRA_OAUTH_REDIRECT_URI", "ATLASSIAN_REDIRECT_URI", "NEXT_PUBLIC_CONFLUENCE_OAUTH_REDIRECT_URI", "NEXT_PUBLIC_JIRA_OAUTH_REDIRECT_URI", "NEXT_PUBLIC_ATLASSIAN_REDIRECT_URI"))
+    confluence_redirect_uri: Optional[str] = Field(default=_env_first("ATLASSIAN_OAUTH_REDIRECT_URI", "ATLASSIAN_REDIRECT_URI", "CONFLUENCE_OAUTH_REDIRECT_URI", "JIRA_OAUTH_REDIRECT_URI", "NEXT_PUBLIC_ATLASSIAN_REDIRECT_URI", "NEXT_PUBLIC_CONFLUENCE_OAUTH_REDIRECT_URI", "NEXT_PUBLIC_JIRA_OAUTH_REDIRECT_URI"))
 
 
 # Load settings once at startup. To pick up new envs, restart the server process.
@@ -246,16 +253,28 @@ def get_atlassian_base_url() -> str:
     return (_SETTINGS.atlassian_base_url or "").strip()
 
 
+def _choose_canonical_redirect(default_path: str) -> str:
+    """
+    Choose the canonical Atlassian redirect URI.
+    Priority:
+      1) ATLASSIAN_OAUTH_REDIRECT_URI (primary)
+      2) ATLASSIAN_REDIRECT_URI (legacy alias)
+      3) Provider-specific: JIRA/CONFLUENCE
+      4) Build from PUBLIC_BASE_URL + default_path
+    """
+    # Try canonical/alias/provider-specific in order
+    val, _src = _resolve_env(ATLASSIAN_REDIRECT_ENV_CANDIDATES)
+    effective = (val or "").strip()
+    if effective:
+        return effective
+    # Fallback: build from PUBLIC_BASE_URL
+    pub_base = (_SETTINGS.public_base_url or "").strip()
+    return _build_public_url(pub_base, default_path) if pub_base else ""
+
 # PUBLIC_INTERFACE
 def get_jira_oauth_config() -> Dict[str, str]:
     """Return Jira OAuth 2.0 config from the environment with robust fallbacks."""
-    explicit_redirect = (_SETTINGS.jira_redirect_uri or "").strip()
-    redirect_uri = explicit_redirect
-    # If not explicitly set, try to build from PUBLIC_BASE_URL
-    if not redirect_uri:
-        pub_base = (_SETTINGS.public_base_url or "").strip()
-        built = _build_public_url(pub_base, "/auth/jira/callback") if pub_base else ""
-        redirect_uri = built
+    redirect_uri = _choose_canonical_redirect("/auth/jira/callback")
     return {
         "client_id": (_SETTINGS.jira_client_id or "").strip(),
         "client_secret": (_SETTINGS.jira_client_secret or "").strip(),
@@ -271,14 +290,11 @@ def get_jira_oauth_config() -> Dict[str, str]:
 def get_confluence_oauth_config() -> Dict[str, str]:
     """
     Return Confluence OAuth 2.0 config from the environment.
-    Falls back to Jira or generic Atlassian config if dedicated Confluence values are not provided.
+    Falls back to canonical Atlassian redirect if a dedicated one is not provided.
     """
+    # If a dedicated Confluence redirect is set, use it; otherwise use the canonical Atlassian redirect builder
     explicit_redirect = (_SETTINGS.confluence_redirect_uri or "").strip()
-    redirect_uri = explicit_redirect
-    if not redirect_uri:
-        pub_base = (_SETTINGS.public_base_url or "").strip()
-        built = _build_public_url(pub_base, "/auth/confluence/callback") if pub_base else ""
-        redirect_uri = built
+    redirect_uri = explicit_redirect or _choose_canonical_redirect("/auth/confluence/callback")
     return {
         "client_id": (_SETTINGS.confluence_client_id or "").strip(),
         "client_secret": (_SETTINGS.confluence_client_secret or "").strip(),
@@ -392,4 +408,20 @@ def get_env_bootstrap_debug() -> Dict[str, str]:
         "dotenv_path": str(_DOTENV_STATUS.get("path") or ""),
         "app_env": (_SETTINGS.app_env or "production"),
         "dev_mode": str(_SETTINGS.dev_mode).lower(),
+    }
+
+# PUBLIC_INTERFACE
+def get_active_redirect_uris_debug() -> Dict[str, Dict[str, str]]:
+    """Return which redirect URIs are currently active for Jira and Confluence."""
+    jira_redirect = _choose_canonical_redirect("/auth/jira/callback")
+    conf_redirect = (_SETTINGS.confluence_redirect_uri or "").strip() or _choose_canonical_redirect("/auth/confluence/callback")
+    return {
+        "jira": {
+            "uri": jira_redirect,
+            "analysis": _analyze_url(jira_redirect),
+        },
+        "confluence": {
+            "uri": conf_redirect,
+            "analysis": _analyze_url(conf_redirect),
+        },
     }

@@ -61,6 +61,7 @@ from src.api.oauth_config import (
     build_atlassian_authorize_url,
     get_jira_oauth_env_debug,
     get_env_bootstrap_debug,
+    get_active_redirect_uris_debug,
 )
 
 from src.api.schemas import (
@@ -377,6 +378,19 @@ def healthz():
     Readiness endpoint. Returns OK status for probes/load balancers.
     """
     return {"status": "ok"}
+
+# PUBLIC_INTERFACE
+@app.get(
+    "/health/redirect-uri",
+    tags=["Health"],
+    summary="Active Atlassian redirect URIs",
+    description="Returns which redirect URIs are currently active for Jira and Confluence, for operator verification.",
+)
+def health_redirect_uri():
+    """
+    Return the effective redirect URIs used by the backend for Atlassian OAuth flows.
+    """
+    return _ocean_response(get_active_redirect_uris_debug(), "active redirect URIs")
 
 
 # Users (Public)
