@@ -10,7 +10,7 @@ This backend includes a lightweight SQLAlchemy-based persistence layer using SQL
 Now supports OAuth 2.0 (3LO) for Atlassian (Jira/Confluence):
 - Configure OAuth via environment variables (see `integration_backend/.env.example`).
 - New endpoints:
-  - GET /auth/jira/login -> redirects to Atlassian authorization
+  - GET /auth/jira/login -> returns JSON {"url": "<authorize>"} by default; if ?redirect=true responds with 307 redirect (Cache-Control: no-store) to Atlassian authorization
   - GET /auth/jira/callback -> handles token exchange and stores tokens on the user
   - GET /auth/confluence/login
   - GET /auth/confluence/callback
@@ -60,7 +60,7 @@ Now supports OAuth 2.0 (3LO) for Atlassian (Jira/Confluence):
   - POST /jira/projects, GET /jira/projects/{owner_id}
   - POST /confluence/pages, GET /confluence/pages/{owner_id}
 - OAuth:
-  - GET /auth/jira/login -> redirect to Atlassian
+  - GET /auth/jira/login -> JSON authorize URL by default; ?redirect=true issues HTTP 307 redirect (Cache-Control: no-store)
   - GET /auth/jira/callback -> exchange code; persists tokens on first user (demo)
   - GET /auth/confluence/login
   - GET /auth/confluence/callback
@@ -119,7 +119,7 @@ Environment fallback mapping:
 
 ### Frontend integration notes
 - The "Connect Now" button for Jira should initiate a request to POST /integrations/jira/connect and then follow the redirect_url returned ("/auth/jira/login").
-  Alternatively, the button can directly open GET /auth/jira/login.
+  Alternatively, the button can directly open GET /auth/jira/login?redirect=true to perform a backend 307 redirect to Atlassian (Cache-Control: no-store). If you prefer to control navigation from the client, call GET /auth/jira/login without the flag and use the returned JSON {"url": "..."}.
 - Confluence connect is analogous ("/auth/confluence/login").
 - After Atlassian redirects back to our backend callbacks, the backend will:
   - Exchange authorization code for tokens

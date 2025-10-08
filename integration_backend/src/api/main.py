@@ -383,16 +383,26 @@ def healthz():
     "/auth/jira/login",
     tags=["Auth"],
     summary="Start Jira OAuth 2.0 login",
-    description="Redirects the user to Atlassian authorization page. Frontend should open this URL to start the flow.",
+    description="Returns JSON authorize URL by default; add ?redirect=true to receive a 307 redirect to Atlassian (Cache-Control: no-store).",
 )
-def jira_login(request: Request, state: Optional[str] = None, scope: Optional[str] = None):
+def jira_login(
+    request: Request,
+    state: Optional[str] = None,
+    scope: Optional[str] = None,
+    redirect: Optional[bool] = False,
+):
     """
     Initiate Jira OAuth 2.0 authorization flow using Atlassian OAuth 2.0 (3LO).
+
     Parameters:
         state: Optional opaque state to be returned by Atlassian to mitigate CSRF (frontend should generate and verify).
         scope: Optional space-separated scopes. If not provided, defaults to commonly used scopes configured in your app.
+        redirect: Optional boolean. If true, this endpoint issues a 307 Temporary Redirect to the Atlassian authorize URL
+                  with 'Cache-Control: no-store'. If false/absent, returns JSON { "url": "<authorize_url>" }.
+
     Returns:
-        200 JSON with {"url": "<authorize_url>"} for programmatic use, or 400 with details if misconfigured.
+        - When redirect is true: 307 redirect to Atlassian authorize URL with Cache-Control: no-store
+        - Otherwise: 200 JSON with {"url": "<authorize_url>"} (or 400 with config details if misconfigured)
     """
     provider = "jira"
     try:
@@ -403,6 +413,7 @@ def jira_login(request: Request, state: Optional[str] = None, scope: Optional[st
             provider=provider,
             has_state=bool(state),
             scope_count=(len(scope.split()) if scope else 0),
+            redirect_flag=bool(redirect),
         )
 
         cfg = get_jira_oauth_config()
@@ -445,6 +456,7 @@ def jira_login(request: Request, state: Optional[str] = None, scope: Optional[st
                     env_debug=env_debug,
                     reasons=reasons,
                 )
+                # Even if redirect=true is requested, we keep the safe mock JSON behavior in dev to avoid surprise navigation.
                 return JSONResponse(
                     status_code=200,
                     content={
@@ -504,7 +516,12 @@ def jira_login(request: Request, state: Optional[str] = None, scope: Optional[st
         redirect_analysis = env_debug["redirect_uri"].get("analysis", {})
 
         # Build authorize URL using EXACT redirect_uri from env (no normalization)
-        url = build_atlassian_authorize_url(client_id=client_id, redirect_uri=redirect_uri, scopes=scopes, state=state)
+        url = build_atlassian_authorize_url(
+            client_id=client_id,
+            redirect_uri=redirect_uri,
+            scopes=scopes,
+            state=state,
+        )
         _log_event(
             logging.INFO,
             "oauth_login_redirect",
@@ -520,7 +537,16 @@ def jira_login(request: Request, state: Optional[str] = None, scope: Optional[st
                 "client_secret": env_debug["client_secret"]["source"],
                 "redirect_uri": env_debug["redirect_uri"]["source"],
             },
+            chosen_mode=("http_redirect" if redirect else "json_url"),
         )
+
+        # If redirect=true -> issue HTTP 307 with no-store cache policy; else return JSON
+        if redirect:
+            response = RedirectResponse(url=url, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+            # Prevent browser/proxy caching of the redirect response
+            response.headers["Cache-Control"] = "no-store"
+            return response
+
         # Return 200 with the URL for clients to navigate
         return JSONResponse(status_code=200, content={"url": url})
     except HTTPException:
@@ -1232,12 +1258,17 @@ def list_confluence_pages_endpoint(owner_id: int, db=Depends(get_db)):
     summary="Alias: Start Jira OAuth 2.0 login (/api prefix)",
     description="Compatibility alias for environments where a proxy forwards '/api/auth/jira/login' to backend unchanged.",
 )
-def jira_login_api_alias(request: Request, state: Optional[str] = None, scope: Optional[str] = None):
+def jira_login_api_alias(
+    request: Request,
+    state: Optional[str] = None,
+    scope: Optional[str] = None,
+    redirect: Optional[bool] = False,
+):
     """
     Alias wrapper for /auth/jira/login to support '/api' prefixed routes through proxies.
     """
     _log_event(logging.INFO, "oauth_alias_route_invoked", request, provider="jira", alias="/api/auth/jira/login")
-    return jira_login(request, state=state, scope=scope)
+    return jira_login(request, state=state, scope=scope, redirect=redirect)
 
 
 # PUBLIC_INTERFACE
