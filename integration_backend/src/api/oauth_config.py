@@ -307,6 +307,7 @@ def _choose_canonical_redirect(default_path: str) -> str:
             return built
 
     # Final static safe default for this deployment to satisfy acceptance criteria if nothing else is set.
+    # IMPORTANT: Never fallback to frontend (port 3000) or any '/api/oauth/callback/jira' path.
     # Note: This is only used when no envs are set; it points to the backend on port 3001.
     return "https://vscode-internal-21156-beta.beta01.cloud.kavia.ai:3001" + default_path
 

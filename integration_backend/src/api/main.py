@@ -630,6 +630,21 @@ def jira_login(
             provider=provider,
             authorize_url=url,
         )
+        # Sanity check: ensure redirect_uri appears exactly as encoded in the URL
+        try:
+            encoded_ri = urllib.parse.quote(redirect_uri, safe="")
+            has_redirect_param = f"redirect_uri={encoded_ri}" in url
+            _log_event(
+                logging.INFO,
+                "oauth_authorize_url_sanity",
+                request,
+                provider=provider,
+                contains_expected_redirect_uri=has_redirect_param,
+                expected_redirect_uri_encoded=encoded_ri,
+            )
+        except Exception:
+            # Non-fatal; proceed
+            pass
         return JSONResponse(status_code=200, content={"url": url})
     except HTTPException:
         APP_LOGGER.exception("OAuth login HTTPException", extra={
