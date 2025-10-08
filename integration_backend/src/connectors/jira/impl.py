@@ -39,6 +39,7 @@ class JiraConnector(BaseConnector):
         else:
             compound_state = json.dumps({"tenant_id": tenant_id}, separators=(",", ":"))
 
+        # Note: redirect_uri comes from backend config and MUST NOT be derived from any frontend URL.
         return build_atlassian_authorize_url(
             client_id=client_id, redirect_uri=redirect_uri, scopes=scopes, state=compound_state
         )
