@@ -77,6 +77,24 @@ def _clear_users():
             raise
 
 
+def test_jira_callback_accepts_standard_state_without_raw_state(monkeypatch):
+    _patch_httpx(monkeypatch)
+    _clear_users()
+
+    client = TestClient(app, follow_redirects=False)
+    # Simulate Atlassian redirect with code and state only (no raw_state)
+    resp = client.get("/auth/jira/callback?code=demo&state=kc-oauth")
+    assert resp.status_code in (302, 307)
+
+    # Ensure a user was created and tokens stored
+    with SessionLocal() as db:
+        users = db.query(User).all()
+        assert len(users) == 1
+        u = users[0]
+        assert u.jira_token == "test_access_token"
+        assert u.jira_refresh_token == "test_refresh_token"
+
+
 def test_jira_callback_creates_placeholder_user_when_none(monkeypatch):
     _patch_httpx(monkeypatch)
     _clear_users()

@@ -573,7 +573,10 @@ def jira_login(
     "/auth/jira/callback",
     tags=["Auth"],
     summary="Jira OAuth 2.0 callback",
-    description="Handles Atlassian redirect, exchanges code for tokens, stores them on the first user (or targeted later), and redirects back to frontend.",
+    description=(
+        "Handles Atlassian redirect, exchanges code for tokens, stores them on the first user (or targeted later), and redirects back to frontend.\n"
+        "Notes: Accepts standard 'state' from Atlassian; a legacy 'raw_state' is also accepted but optional."
+    ),
 )
 def _parse_state_map(raw_state: Optional[str]) -> Dict[str, Any]:
     """Best-effort parse of the OAuth 'state' to extract user hints."""
@@ -653,7 +656,13 @@ def _ensure_target_user(db, request: Request, state: Optional[str]):
     return user, {"method": "placeholder_created", "email": placeholder_email}
 
 
-async def jira_callback(request: Request, db=Depends(get_db), code: Optional[str] = None, state: Optional[str] = None):
+async def jira_callback(
+    request: Request,
+    db=Depends(get_db),
+    code: Optional[str] = None,
+    state: Optional[str] = None,
+    raw_state: Optional[str] = None,
+):
     """
     Complete Jira OAuth 2.0 flow:
     - Exchange authorization code for access and refresh tokens
@@ -742,8 +751,11 @@ async def jira_callback(request: Request, db=Depends(get_db), code: Optional[str
             _log_event(logging.ERROR, "oauth_no_access_token", request, provider=provider, status_code=502)
             raise HTTPException(status_code=502, detail="No access token returned by Atlassian")
 
+        # Normalize state: prefer explicit state, fallback to legacy raw_state, else empty
+        effective_state = state if state is not None else raw_state
+
         # Resolve or create a user to associate with this connection
-        user, user_meta = _ensure_target_user(db, request, state)
+        user, user_meta = _ensure_target_user(db, request, effective_state)
 
         user.jira_token = access_token
         user.jira_refresh_token = refresh_token
@@ -768,7 +780,7 @@ async def jira_callback(request: Request, db=Depends(get_db), code: Optional[str
         # Preserve state and minimal info; do not leak tokens
         params = {
             "status": "success",
-            "state": state or "",
+            "state": (effective_state or ""),
             "user_id": str(user.id),
         }
         redirect_to = f"{frontend_base.rstrip('/')}{return_path}?{urllib.parse.urlencode(params)}"
@@ -949,7 +961,7 @@ def confluence_login(request: Request, state: Optional[str] = None, scope: Optio
     "/auth/confluence/callback",
     tags=["Auth"],
     summary="Confluence OAuth 2.0 callback",
-    description="Handles Atlassian redirect, exchanges code for tokens, stores them on the first user, and redirects back to frontend.",
+    description="Handles Atlassian redirect, exchanges code for tokens, stores them on the first user, and redirects back to frontend. Accepts standard 'state' parameter.",
 )
 async def confluence_callback(request: Request, db=Depends(get_db), code: Optional[str] = None, state: Optional[str] = None):
     """
