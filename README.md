@@ -25,10 +25,24 @@ Now supports OAuth 2.0 (3LO) for Atlassian (Jira/Confluence):
 3. Create `.env` from example and fill in your values:
    - `cp integration_backend/.env.example integration_backend/.env`
    - Set ATLASSIAN_CLOUD_BASE_URL, JIRA_OAUTH_CLIENT_ID/SECRET/REDIRECT_URI, APP_FRONTEND_URL, etc.
+   - For local development, keep `APP_ENV=development` and `DEV_MODE=true` to enable safe mocks.
 4. Run API:
    - `uvicorn src.api.main:app --reload --port 3001 --app-dir integration_backend`
 5. Generate OpenAPI spec (optional, while API is running is not required):
    - `python -m src.api.generate_openapi` (run from `integration_backend` directory)
+
+### Health and Docs
+- Health: `GET /` and readiness: `GET /healthz` return quick status checks.
+- OpenAPI/Swagger: `GET /docs` and OpenAPI schema at `/openapi.json`.
+
+### Configuration and error handling improvements
+- Centralized settings via environment variables; see `.env.example`.
+- When Jira OAuth is not configured:
+  - In production: `/auth/jira/login` returns 400 with a clear message (no 500s).
+  - In development (`APP_ENV=development` or `DEV_MODE=true`): `/auth/jira/login` returns 200 with a mock redirect URL to keep previews working.
+- CORS can be controlled via `BACKEND_CORS_ORIGINS` (comma separated). Defaults to allowing all in dev.
+- Global exception handler sanitizes unhandled errors and includes `X-Request-ID` in responses and logs.
+
 
 ### API Highlights (public, no authentication)
 - Health:

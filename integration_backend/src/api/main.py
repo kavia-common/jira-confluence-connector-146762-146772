@@ -252,14 +252,21 @@ app = FastAPI(
     description="Backend API for integrating JIRA and Confluence, with a lightweight persistence layer.",
     version="0.1.0",
     openapi_tags=openapi_tags,
+    docs_url="/docs",
+    redoc_url="/redoc",
+    openapi_url="/openapi.json",
 )
 
 # Ensure RequestID is outermost so all logs include it
 app.add_middleware(RequestIDMiddleware)
 
+# CORS: prefer configured origins; fallback to "*"
+from src.api.oauth_config import _SETTINGS as _SETTINGS_INTERNAL  # safe import inside backend
+cors_origins_raw = _SETTINGS_INTERNAL.backend_cors_origins or "*"
+origins = [o.strip() for o in cors_origins_raw.split(",")] if cors_origins_raw else ["*"]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=origins if origins != ["*"] else ["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -308,6 +315,15 @@ def health_check():
     return _ocean_response({"service": "integration_backend", "health": "healthy"}, "service healthy")
 
 
+# PUBLIC_INTERFACE
+@app.get("/healthz", tags=["Health"], summary="Readiness probe", description="Simple readiness endpoint for container orchestration.")
+def healthz():
+    """
+    Readiness endpoint. Returns OK status for probes/load balancers.
+    """
+    return {"status": "ok"}
+
+
 # Users (Public)
 
 # -----------------------
@@ -344,9 +360,34 @@ def jira_login(request: Request, state: Optional[str] = None, scope: Optional[st
         cfg = get_jira_oauth_config()
         client_id = cfg.get("client_id")
         redirect_uri = cfg.get("redirect_uri")
+        app_env = (cfg.get("app_env") or "production").lower()
+        dev_mode = (cfg.get("dev_mode") or "false") in ("true", "1", "yes")
         if not client_id or not redirect_uri:
+            # Dev-safe behavior: allow mock response in dev
+            if dev_mode or app_env == "development":
+                mock_url = "https://auth.atlassian.com/authorize?mock=true"
+                _log_event(logging.WARNING, "oauth_login_mock_dev", request, provider=provider, mock_redirect=mock_url)
+                return JSONResponse(
+                    status_code=200,
+                    content={
+                        "status": "success",
+                        "message": "DEV mode: Jira OAuth not configured, returning mock authorization URL.",
+                        "data": {"redirect_url": mock_url, "provider": provider},
+                    },
+                )
             _log_event(logging.ERROR, "oauth_login_config_error", request, provider=provider)
-            raise HTTPException(status_code=500, detail="Jira OAuth is not configured. Set environment variables.")
+            # Return a clear 400 for misconfiguration
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "status": "error",
+                    "message": "Jira OAuth is not configured. Set JIRA_OAUTH_CLIENT_ID and JIRA_OAUTH_REDIRECT_URI.",
+                    "missing": {
+                        "client_id": bool(client_id),
+                        "redirect_uri": bool(redirect_uri),
+                    },
+                },
+            )
 
         # Default scopes can be tailored based on your app setup in Atlassian developer console
         default_scopes = [
@@ -423,8 +464,12 @@ async def jira_callback(request: Request, db=Depends(get_db), code: Optional[str
         client_secret = cfg.get("client_secret")
         redirect_uri = cfg.get("redirect_uri")
         if not client_id or not client_secret or not redirect_uri:
-            _log_event(logging.ERROR, "oauth_callback_config_error", request, provider=provider, status_code=500)
-            raise HTTPException(status_code=500, detail="Jira OAuth is not configured. Set environment variables.")
+            # Distinguish config error as 400, not 500
+            _log_event(logging.ERROR, "oauth_callback_config_error", request, provider=provider, status_code=400)
+            raise HTTPException(
+                status_code=400,
+                detail="Jira OAuth is not configured. Missing client_id/client_secret/redirect_uri.",
+            )
 
         token_url = "https://auth.atlassian.com/oauth/token"
         data = {
@@ -713,8 +758,11 @@ async def confluence_callback(request: Request, db=Depends(get_db), code: Option
         client_secret = cfg.get("client_secret")
         redirect_uri = cfg.get("redirect_uri")
         if not client_id or not client_secret or not redirect_uri:
-            _log_event(logging.ERROR, "oauth_callback_config_error", request, provider=provider, status_code=500)
-            raise HTTPException(status_code=500, detail="Confluence OAuth is not configured. Set environment variables.")
+            _log_event(logging.ERROR, "oauth_callback_config_error", request, provider=provider, status_code=400)
+            raise HTTPException(
+                status_code=400,
+                detail="Confluence OAuth is not configured. Missing client_id/client_secret/redirect_uri.",
+            )
 
         token_url = "https://auth.atlassian.com/oauth/token"
         data = {
