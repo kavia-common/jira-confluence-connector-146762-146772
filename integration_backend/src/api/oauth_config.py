@@ -10,12 +10,14 @@ Required environment variables (example .env is provided separately):
 - ATLASSIAN_OAUTH_REDIRECT_URI: Canonical Redirect URI configured in Atlassian developer console, e.g. "https://yourapp.com/auth/jira/callback"
   This canonical value will be used for both Jira and Confluence by default unless an explicit provider-specific redirect is provided.
 
-Redirect URI precedence (never uses frontend):
-1) ATLASSIAN_OAUTH_REDIRECT_URI if set
+Redirect URI precedence (never uses any frontend or port 3000 path):
+1) ATLASSIAN_OAUTH_REDIRECT_URI if set (used verbatim)
 2) ATLASSIAN_REDIRECT_URI (legacy alias)
 3) Provider-specific JIRA_OAUTH_REDIRECT_URI/CONFLUENCE_OAUTH_REDIRECT_URI
-4) Computed from backend base origin + "/auth/{provider}/callback"
+4) Computed strictly from backend base origin + "/auth/{provider}/callback"
    - Backend origin is resolved from PUBLIC_BASE_URL/BACKEND_PUBLIC_BASE_URL/… or BACKEND_BASE_URL/APP_BACKEND_URL
+   - Example desired Jira redirect: "https://<host>:3001/auth/jira/callback"
+   - Do not ever fallback to "/api/oauth/callback/jira" or any "http(s)://*:3000/*" URL
 
 - CONFLUENCE_OAUTH_CLIENT_ID, CONFLUENCE_OAUTH_CLIENT_SECRET, CONFLUENCE_OAUTH_REDIRECT_URI:
   If you use a distinct app/client for Confluence. If not set, Jira values will be reused.

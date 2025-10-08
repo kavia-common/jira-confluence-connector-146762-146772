@@ -566,6 +566,16 @@ def jira_login(
         # Non-blocking analysis for observability
         redirect_analysis = env_debug["redirect_uri"].get("analysis", {})
 
+        # Emit an explicit probe log of the resolved redirect_uri for observability
+        _log_event(
+            logging.INFO,
+            "oauth_resolved_redirect_probe",
+            request,
+            provider=provider,
+            resolved_redirect_uri=redirect_uri,
+            resolved_redirect_uri_analysis=redirect_analysis,
+        )
+
         # Build authorize URL using EXACT redirect_uri from env (no normalization)
         # When redirect flag is false, we must not include a state parameter per acceptance criteria.
         state_for_url = state if redirect else None
