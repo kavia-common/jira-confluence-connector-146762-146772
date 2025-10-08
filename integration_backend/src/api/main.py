@@ -24,12 +24,42 @@ from src.db.service import (
     upsert_confluence_page,
     list_confluence_pages_for_user,
 )
+
+# Early .env load to support local dev/preview where container env is not injected.
+try:
+    from dotenv import load_dotenv  # type: ignore
+    from pathlib import Path
+    # Try a few deterministic locations. Do not override real env variables if already set.
+    _env_candidates = [
+        os.getenv("INTEGRATION_BACKEND_ENV_FILE"),
+        str((Path(__file__).resolve().parents[2] / ".env")),
+        str((Path.cwd() / "integration_backend" / ".env")),
+    ]
+    _loaded = False
+    for _p in _env_candidates:
+        if _p and os.path.isfile(_p):
+            try:
+                _loaded = load_dotenv(_p, override=False)
+            except Exception:
+                _loaded = False
+            if _loaded:
+                break
+    if not _loaded:
+        try:
+            load_dotenv(override=False)
+        except Exception:
+            pass
+except Exception:
+    # dotenv is optional at runtime; if not present or any error occurs, continue gracefully
+    pass
+
 from src.api.oauth_config import (
     get_jira_oauth_config,
     get_confluence_oauth_config,
     get_frontend_base_url_default,
     build_atlassian_authorize_url,
     get_jira_oauth_env_debug,
+    get_env_bootstrap_debug,
 )
 
 from src.api.schemas import (
@@ -110,6 +140,22 @@ def _configure_logging() -> logging.Logger:
 
 
 APP_LOGGER = _configure_logging()
+# Emit a one-time environment bootstrap log for diagnostics
+try:
+    _bootstrap = get_env_bootstrap_debug()
+    APP_LOGGER.info(
+        "Environment bootstrap",
+        extra={
+            "event": "env_bootstrap",
+            "dotenv_loaded": _bootstrap.get("dotenv_loaded"),
+            "dotenv_path": _bootstrap.get("dotenv_path"),
+            "app_env": _bootstrap.get("app_env"),
+            "dev_mode": _bootstrap.get("dev_mode"),
+        },
+    )
+except Exception:
+    # Non-fatal if diagnostics fail
+    pass
 
 
 # -----------------------
@@ -406,11 +452,15 @@ def jira_login(request: Request, state: Optional[str] = None, scope: Optional[st
                         "provider": provider,
                         "dev": True,
                         "missing": missing,
-                        "details": {"reasons": reasons, "env_sources": {
-                            "client_id": env_debug["client_id"]["source"],
-                            "client_secret": env_debug["client_secret"]["source"],
-                            "redirect_uri": env_debug["redirect_uri"]["source"],
-                        }},
+                        "details": {
+                            "reasons": reasons,
+                            "env_sources": {
+                                "client_id": env_debug["client_id"]["source"],
+                                "client_secret": env_debug["client_secret"]["source"],
+                                "redirect_uri": env_debug["redirect_uri"]["source"],
+                            },
+                        },
+                        "env_bootstrap": get_env_bootstrap_debug(),
                     },
                 )
 
@@ -438,6 +488,7 @@ def jira_login(request: Request, state: Optional[str] = None, scope: Optional[st
                         },
                         "redirect_uri_analysis": env_debug["redirect_uri"].get("analysis", {}),
                     },
+                    "env_bootstrap": get_env_bootstrap_debug(),
                 },
             )
 

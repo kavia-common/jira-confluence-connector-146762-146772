@@ -24,6 +24,71 @@ import urllib.parse
 from typing import Dict, Optional, Tuple, List
 from pydantic import BaseModel, Field
 
+# Load .env early for local dev/preview so settings see variables at import-time.
+# We avoid logging here to prevent circular imports; status is exposed via get_env_bootstrap_debug().
+try:
+    from dotenv import load_dotenv, find_dotenv  # type: ignore
+except Exception:
+    load_dotenv = None  # type: ignore
+    find_dotenv = None  # type: ignore
+
+_DOTENV_STATUS: Dict[str, Optional[str]] = {"loaded": "false", "path": None}
+
+
+def _load_env_once() -> None:
+    """Attempt to load a .env for integration_backend with best-effort search."""
+    if _DOTENV_STATUS.get("loaded") == "true":
+        return
+    env_file = os.getenv("INTEGRATION_BACKEND_ENV_FILE")
+
+    candidates: List[Optional[str]] = []
+    if env_file:
+        candidates.append(env_file)
+    try:
+        # This file is at integration_backend/src/api/oauth_config.py -> ../../.env should be integration_backend/.env
+        here = os.path.dirname(__file__)
+        candidates.append(os.path.normpath(os.path.join(here, "../../.env")))
+    except Exception:
+        pass
+    if find_dotenv:
+        # Try common locations based on CWD/root
+        try:
+            candidates.append(find_dotenv(".env", raise_error=False))
+        except Exception:
+            candidates.append(None)
+        try:
+            candidates.append(find_dotenv("integration_backend/.env", raise_error=False))
+        except Exception:
+            candidates.append(None)
+
+    path_used = None
+    loaded = False
+    if load_dotenv:
+        # Try specific candidates first
+        for c in candidates:
+            if c and os.path.isfile(c):
+                try:
+                    loaded = load_dotenv(c, override=False)
+                except Exception:
+                    loaded = False
+                if loaded:
+                    path_used = c
+                    break
+        # Fallback to auto-discovery from process CWD
+        if not loaded:
+            try:
+                loaded = load_dotenv(override=False)
+            except Exception:
+                loaded = False
+            if loaded and path_used is None:
+                path_used = "auto"
+    _DOTENV_STATUS["loaded"] = "true" if loaded else "false"
+    _DOTENV_STATUS["path"] = path_used
+
+
+# Ensure env is loaded before Settings() is constructed
+_load_env_once()
+
 
 def _env_first(*names: str) -> str:
     """Return the first non-empty environment variable value among names (trimmed)."""
@@ -260,6 +325,17 @@ def get_jira_oauth_env_debug() -> Dict[str, Dict[str, str]]:
             "source": base_src or "",
             "value_masked": _mask_secret(base_val),
         },
+        "app_env": (_SETTINGS.app_env or "production"),
+        "dev_mode": str(_SETTINGS.dev_mode).lower(),
+    }
+
+
+# PUBLIC_INTERFACE
+def get_env_bootstrap_debug() -> Dict[str, str]:
+    """Return debug info about dotenv loading and runtime mode for diagnostics."""
+    return {
+        "dotenv_loaded": str(_DOTENV_STATUS.get("loaded") or "").lower(),
+        "dotenv_path": str(_DOTENV_STATUS.get("path") or ""),
         "app_env": (_SETTINGS.app_env or "production"),
         "dev_mode": str(_SETTINGS.dev_mode).lower(),
     }
