@@ -23,19 +23,50 @@ import os
 from typing import Dict
 
 
+def _env_first(*names: str) -> str:
+    """Return the first non-empty environment variable value among names (trimmed)."""
+    for name in names:
+        val = os.getenv(name, "")
+        if val and val.strip():
+            return val.strip()
+    return ""
+
+
 # PUBLIC_INTERFACE
 def get_atlassian_base_url() -> str:
     """Return Atlassian Cloud base URL (e.g., https://your-team.atlassian.net)."""
-    return os.getenv("ATLASSIAN_CLOUD_BASE_URL", "").strip()
+    return _env_first(
+        "ATLASSIAN_CLOUD_BASE_URL",
+        "NEXT_PUBLIC_ATLASSIAN_CLOUD_BASE_URL",
+    )
 
 
 # PUBLIC_INTERFACE
 def get_jira_oauth_config() -> Dict[str, str]:
-    """Return Jira OAuth 2.0 config from the environment."""
+    """Return Jira OAuth 2.0 config from the environment with robust fallbacks."""
+    client_id = _env_first(
+        "JIRA_OAUTH_CLIENT_ID",
+        "ATLASSIAN_CLIENT_ID",
+        "NEXT_PUBLIC_JIRA_OAUTH_CLIENT_ID",
+        "NEXT_PUBLIC_JIRA_CLIENT_ID",
+        "NEXT_PUBLIC_ATLASSIAN_CLIENT_ID",
+    )
+    client_secret = _env_first(
+        "JIRA_OAUTH_CLIENT_SECRET",
+        "ATLASSIAN_CLIENT_SECRET",
+        "NEXT_PUBLIC_JIRA_OAUTH_CLIENT_SECRET",
+        "NEXT_PUBLIC_ATLASSIAN_CLIENT_SECRET",
+    )
+    redirect_uri = _env_first(
+        "JIRA_OAUTH_REDIRECT_URI",
+        "ATLASSIAN_REDIRECT_URI",
+        "NEXT_PUBLIC_JIRA_OAUTH_REDIRECT_URI",
+        "NEXT_PUBLIC_ATLASSIAN_REDIRECT_URI",
+    )
     return {
-        "client_id": os.getenv("JIRA_OAUTH_CLIENT_ID", "").strip(),
-        "client_secret": os.getenv("JIRA_OAUTH_CLIENT_SECRET", "").strip(),
-        "redirect_uri": os.getenv("JIRA_OAUTH_REDIRECT_URI", "").strip(),
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "redirect_uri": redirect_uri,
         "base_url": get_atlassian_base_url(),
     }
 
@@ -44,13 +75,37 @@ def get_jira_oauth_config() -> Dict[str, str]:
 def get_confluence_oauth_config() -> Dict[str, str]:
     """
     Return Confluence OAuth 2.0 config from the environment.
-    Falls back to Jira config if dedicated Confluence values are not provided.
+    Falls back to Jira or generic Atlassian config if dedicated Confluence values are not provided.
     """
-    jira_cfg = get_jira_oauth_config()
+    client_id = _env_first(
+        "CONFLUENCE_OAUTH_CLIENT_ID",
+        "JIRA_OAUTH_CLIENT_ID",
+        "ATLASSIAN_CLIENT_ID",
+        "NEXT_PUBLIC_CONFLUENCE_OAUTH_CLIENT_ID",
+        "NEXT_PUBLIC_JIRA_OAUTH_CLIENT_ID",
+        "NEXT_PUBLIC_JIRA_CLIENT_ID",
+        "NEXT_PUBLIC_ATLASSIAN_CLIENT_ID",
+    )
+    client_secret = _env_first(
+        "CONFLUENCE_OAUTH_CLIENT_SECRET",
+        "JIRA_OAUTH_CLIENT_SECRET",
+        "ATLASSIAN_CLIENT_SECRET",
+        "NEXT_PUBLIC_CONFLUENCE_OAUTH_CLIENT_SECRET",
+        "NEXT_PUBLIC_JIRA_OAUTH_CLIENT_SECRET",
+        "NEXT_PUBLIC_ATLASSIAN_CLIENT_SECRET",
+    )
+    redirect_uri = _env_first(
+        "CONFLUENCE_OAUTH_REDIRECT_URI",
+        "JIRA_OAUTH_REDIRECT_URI",
+        "ATLASSIAN_REDIRECT_URI",
+        "NEXT_PUBLIC_CONFLUENCE_OAUTH_REDIRECT_URI",
+        "NEXT_PUBLIC_JIRA_OAUTH_REDIRECT_URI",
+        "NEXT_PUBLIC_ATLASSIAN_REDIRECT_URI",
+    )
     return {
-        "client_id": os.getenv("CONFLUENCE_OAUTH_CLIENT_ID", jira_cfg["client_id"]).strip(),
-        "client_secret": os.getenv("CONFLUENCE_OAUTH_CLIENT_SECRET", jira_cfg["client_secret"]).strip(),
-        "redirect_uri": os.getenv("CONFLUENCE_OAUTH_REDIRECT_URI", jira_cfg["redirect_uri"]).strip(),
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "redirect_uri": redirect_uri,
         "base_url": get_atlassian_base_url(),
     }
 
@@ -58,4 +113,8 @@ def get_confluence_oauth_config() -> Dict[str, str]:
 # PUBLIC_INTERFACE
 def get_frontend_base_url_default() -> str:
     """Return frontend base URL to guide redirects after auth."""
-    return os.getenv("APP_FRONTEND_URL", "").strip()
+    return _env_first(
+        "APP_FRONTEND_URL",
+        "NEXT_PUBLIC_APP_FRONTEND_URL",
+        "NEXT_PUBLIC_FRONTEND_BASE_URL",
+    )

@@ -66,6 +66,28 @@ Scopes:
 - Confluence example: read:confluence-content.all read:confluence-space.summary offline_access
 Configure scopes on Atlassian Developer Console for your app.
 
+### Proxy routing and callback aliases
+Some deployments forward requests through a reverse proxy with an `/api` prefix that is not stripped before reaching the backend. To avoid 502s due to path mismatches, the backend now exposes compatibility aliases:
+
+- GET /api/auth/jira/login -> alias of /auth/jira/login
+- GET /api/auth/jira/callback -> alias of /auth/jira/callback
+- GET /api/auth/confluence/login -> alias of /auth/confluence/login
+- GET /api/auth/confluence/callback -> alias of /auth/confluence/callback
+- GET /api/oauth/atlassian/callback -> generic alias that delegates to Jira callback (use Jira/Confluence-specific callbacks when possible)
+
+Recommended Redirect URIs to configure in Atlassian:
+- Jira: https://<backend-domain>/api/auth/jira/callback (if your proxy keeps `/api`), otherwise https://<backend-domain>/auth/jira/callback
+- Confluence: https://<backend-domain>/api/auth/confluence/callback (or without `/api` if your proxy strips it)
+
+Environment fallback mapping:
+- The backend now accepts NEXT_PUBLIC_* variants commonly used in frontend environments:
+  - JIRA_OAUTH_CLIENT_ID falls back to ATLASSIAN_CLIENT_ID / NEXT_PUBLIC_JIRA_OAUTH_CLIENT_ID / NEXT_PUBLIC_JIRA_CLIENT_ID / NEXT_PUBLIC_ATLASSIAN_CLIENT_ID
+  - JIRA_OAUTH_CLIENT_SECRET falls back to ATLASSIAN_CLIENT_SECRET / NEXT_PUBLIC_JIRA_OAUTH_CLIENT_SECRET / NEXT_PUBLIC_ATLASSIAN_CLIENT_SECRET
+  - JIRA_OAUTH_REDIRECT_URI falls back to ATLASSIAN_REDIRECT_URI / NEXT_PUBLIC_JIRA_OAUTH_REDIRECT_URI / NEXT_PUBLIC_ATLASSIAN_REDIRECT_URI
+  - CONFLUENCE_OAUTH_* fall back to their Jira/Atlassian counterparts if not provided
+  - APP_FRONTEND_URL falls back to NEXT_PUBLIC_APP_FRONTEND_URL / NEXT_PUBLIC_FRONTEND_BASE_URL
+  - ATLASSIAN_CLOUD_BASE_URL falls back to NEXT_PUBLIC_ATLASSIAN_CLOUD_BASE_URL
+
 ### Frontend integration notes
 - The "Connect Now" button for Jira should initiate a request to POST /integrations/jira/connect and then follow the redirect_url returned ("/auth/jira/login").
   Alternatively, the button can directly open GET /auth/jira/login.

@@ -133,7 +133,7 @@ def jira_login(state: Optional[str] = None, scope: Optional[str] = None):
 
     url = f"{authorize_url}?{urllib.parse.urlencode(params)}"
     return RedirectResponse(url)
-    
+
 
 # PUBLIC_INTERFACE
 @app.get(
@@ -206,6 +206,8 @@ async def jira_callback(request: Request, db=Depends(get_db), code: Optional[str
     }
     redirect_to = f"{frontend.rstrip('/')}/oauth/callback?{urllib.parse.urlencode(params)}"
     return RedirectResponse(redirect_to)
+
+
 # PUBLIC_INTERFACE
 @app.post(
     "/users",
@@ -387,6 +389,8 @@ async def confluence_callback(request: Request, db=Depends(get_db), code: Option
     }
     redirect_to = f"{frontend.rstrip('/')}/oauth/callback?{urllib.parse.urlencode(params)}"
     return RedirectResponse(redirect_to)
+
+
 # -----------------------
 
 # PUBLIC_INTERFACE
@@ -625,3 +629,82 @@ def list_confluence_pages_endpoint(owner_id: int, db=Depends(get_db)):
     List all stored Confluence pages for a specific owner.
     """
     return list_confluence_pages_for_user(db, owner_id)
+
+
+# -----------------------
+# Compatibility alias routes for proxies that do not strip `/api` prefix
+# -----------------------
+
+# PUBLIC_INTERFACE
+@app.get(
+    "/api/auth/jira/login",
+    tags=["Auth"],
+    summary="Alias: Start Jira OAuth 2.0 login (/api prefix)",
+    description="Compatibility alias for environments where a proxy forwards '/api/auth/jira/login' to backend unchanged.",
+)
+def jira_login_api_alias(state: Optional[str] = None, scope: Optional[str] = None):
+    """
+    Alias wrapper for /auth/jira/login to support '/api' prefixed routes through proxies.
+    """
+    return jira_login(state=state, scope=scope)
+
+
+# PUBLIC_INTERFACE
+@app.get(
+    "/api/auth/jira/callback",
+    tags=["Auth"],
+    summary="Alias: Jira OAuth 2.0 callback (/api prefix)",
+    description="Compatibility alias mapping '/api/auth/jira/callback' to the existing Jira callback handler.",
+)
+async def jira_callback_api_alias(request: Request, db=Depends(get_db), code: Optional[str] = None, state: Optional[str] = None):
+    """
+    Alias wrapper for /auth/jira/callback to support '/api' prefixed routes.
+    """
+    return await jira_callback(request, db, code, state)
+
+
+# PUBLIC_INTERFACE
+@app.get(
+    "/api/auth/confluence/login",
+    tags=["Auth"],
+    summary="Alias: Start Confluence OAuth 2.0 login (/api prefix)",
+    description="Compatibility alias for environments where a proxy forwards '/api/auth/confluence/login' to backend unchanged.",
+)
+def confluence_login_api_alias(state: Optional[str] = None, scope: Optional[str] = None):
+    """
+    Alias wrapper for /auth/confluence/login to support '/api' prefixed routes through proxies.
+    """
+    return confluence_login(state=state, scope=scope)
+
+
+# PUBLIC_INTERFACE
+@app.get(
+    "/api/auth/confluence/callback",
+    tags=["Auth"],
+    summary="Alias: Confluence OAuth 2.0 callback (/api prefix)",
+    description="Compatibility alias mapping '/api/auth/confluence/callback' to the existing Confluence callback handler.",
+)
+async def confluence_callback_api_alias(request: Request, db=Depends(get_db), code: Optional[str] = None, state: Optional[str] = None):
+    """
+    Alias wrapper for /auth/confluence/callback to support '/api' prefixed routes.
+    """
+    return await confluence_callback(request, db, code, state)
+
+
+# PUBLIC_INTERFACE
+@app.get(
+    "/api/oauth/atlassian/callback",
+    tags=["Auth"],
+    summary="Alias: Atlassian OAuth callback (/api)",
+    description=(
+        "Compatibility alias for Atlassian callback. By default routes to Jira handler. "
+        "Ensure your Atlassian app Redirect URI matches this path or use '/api/auth/{jira|confluence}/callback'."
+    ),
+)
+async def atlassian_callback_alias(request: Request, db=Depends(get_db), code: Optional[str] = None, state: Optional[str] = None):
+    """
+    Generic Atlassian callback alias that delegates to the Jira callback handler.
+    If you are using a dedicated Confluence app/client with a distinct redirect URI,
+    prefer '/api/auth/confluence/callback' to avoid mismatched redirect_uri during token exchange.
+    """
+    return await jira_callback(request, db, code, state)
