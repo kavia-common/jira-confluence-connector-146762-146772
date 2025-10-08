@@ -408,9 +408,10 @@ def health_authorize_url_probe():
     client_id = (cfg.get("client_id") or "").strip()
     # Use same guard/builder as login route
     try:
-        atl_override = os.getenv("ATLASSIAN_OAUTH_REDIRECT_URI", "").strip()
-        if atl_override:
-            redirect_uri = atl_override
+        # Strictly use JIRA_REDIRECT_URI or the strict default via builder
+        jira_override = os.getenv("JIRA_REDIRECT_URI", "").strip()
+        if jira_override:
+            redirect_uri = jira_override
         else:
             from src.api.oauth_config import _choose_canonical_redirect  # type: ignore
             redirect_uri = _choose_canonical_redirect("/auth/jira/callback")
@@ -484,24 +485,33 @@ def jira_login(
         app_env = (cfg.get("app_env") or "production").lower()
         dev_mode = str(cfg.get("dev_mode") or "").lower() in ("true", "1", "yes")
 
-        # Hard guard: if a redirect override is set in env, use it verbatim (check JIRA_REDIRECT_URI first)
-        # Otherwise reconstruct from backend public base to avoid any frontend-derived values.
+        # Strict: only use JIRA_REDIRECT_URI or the strict default builder
         try:
-            override = (
-                os.getenv("JIRA_REDIRECT_URI", "").strip()
-                or os.getenv("ATLASSIAN_OAUTH_REDIRECT_URI", "").strip()
-                or os.getenv("ATLASSIAN_REDIRECT_URI", "").strip()
-                or os.getenv("JIRA_OAUTH_REDIRECT_URI", "").strip()
-            )
+            override = os.getenv("JIRA_REDIRECT_URI", "").strip()
             if override:
                 redirect_uri = override
+                _log_event(
+                    logging.INFO,
+                    "oauth_redirect_uri_source",
+                    request,
+                    provider=provider,
+                    source_env="JIRA_REDIRECT_URI",
+                    redirect_uri=redirect_uri,
+                )
             else:
-                # Import builder lazily to avoid circulars
                 from src.api.oauth_config import _choose_canonical_redirect  # type: ignore
                 redirect_uri = _choose_canonical_redirect("/auth/jira/callback")
-        except Exception:
-            # If anything goes wrong, keep existing redirect_uri from cfg
-            pass
+                _log_event(
+                    logging.INFO,
+                    "oauth_redirect_uri_source",
+                    request,
+                    provider=provider,
+                    source_env="default",
+                    redirect_uri=redirect_uri,
+                )
+        except Exception as e:
+            # Keep existing redirect_uri from cfg but log the error path
+            _log_event(logging.WARNING, "oauth_redirect_uri_builder_exception", request, provider=provider, error=str(e))
 
         # Presence flags and derived missing map (True means the field is missing)
         presence = {
@@ -623,6 +633,14 @@ def jira_login(
             provider=provider,
             final_redirect_uri=redirect_uri,
             authorize_url=url,
+        )
+        APP_LOGGER.info(
+            "Jira OAuth using redirect URI",
+            extra={
+                "event": "oauth_redirect_uri_in_use",
+                "provider": provider,
+                "redirect_uri": redirect_uri,
+            },
         )
 
         _log_event(

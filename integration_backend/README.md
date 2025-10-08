@@ -2,23 +2,19 @@
 
 This service handles OAuth 2.0 (3LO) with Atlassian for Jira and Confluence, persistence, and connector endpoints.
 
-Canonical Atlassian OAuth Redirect URI
-- The backend uses a single env-driven canonical redirect URI for Atlassian, controlled by:
-  - ATLASSIAN_OAUTH_REDIRECT_URI (preferred)
-  - Fallbacks: ATLASSIAN_REDIRECT_URI, JIRA_OAUTH_REDIRECT_URI, CONFLUENCE_OAUTH_REDIRECT_URI
+Canonical Atlassian OAuth Redirect URI (STRICT)
+- The backend now uses a single env-driven canonical redirect URI for Jira, controlled by:
+  - JIRA_REDIRECT_URI (required; if not set, a deployment default is used)
 - The exact value must be registered in the Atlassian Developer Console under Redirect URLs.
-- Example (canonical for this environment; register this exact URL in Atlassian Developer Console):
+- Default used when env is missing (for this deployment):
   https://vscode-internal-36721-beta.beta01.cloud.kavia.ai:3001/auth/jira/callback
-  Alternatively you can use:
-  https://<backend-domain>/auth/jira/callback
-  https://<backend-domain>/api/auth/jira/callback
-  Ensure whatever you choose matches exactly in the Atlassian app settings.
+- No legacy/front-end/alias fallbacks are used anymore.
 
 Note: The acceptance criteria requires the Jira OAuth flow to use:
 https://vscode-internal-36721-beta.beta01.cloud.kavia.ai:3001/auth/jira/callback
 
 Environment variables (see .env.example)
-- ATLASSIAN_OAUTH_REDIRECT_URI=
+- JIRA_REDIRECT_URI=
 - JIRA_OAUTH_CLIENT_ID=
 - JIRA_OAUTH_CLIENT_SECRET=
 - CONFLUENCE_OAUTH_CLIENT_ID=
@@ -30,9 +26,11 @@ Environment variables (see .env.example)
 
 Notes:
 - The frontend does not send redirect_uri. It calls the backend login endpoints and the backend sets redirect_uri.
-- Backend initiates login with the exact redirect_uri resolved from environment.
+- Backend initiates login with the exact redirect_uri resolved from environment (or the strict default).
 - You can verify which redirect URI is active via:
   GET /health/redirect-uri
+- You can verify the full authorize URL (with encoded redirect_uri) via:
+  GET /health/authorize-url
 
 Alias callback routes
 - The backend exposes both non-/api and /api-prefixed alias routes for compatibility:
@@ -41,8 +39,8 @@ Alias callback routes
   - /auth/confluence/login and /auth/confluence/callback
   - /api/auth/confluence/login and /api/auth/confluence/callback
   - Generic alias: /api/oauth/atlassian/callback (delegates to Jira handler)
+    (Note: For the Jira authorize URL, we still use JIRA_REDIRECT_URI only.)
 
 Important
-- Whatever redirect path you pick, ATLASSIAN_OAUTH_REDIRECT_URI must match it exactly.
-- If you change to /api/oauth/atlassian/callback, update Atlassian app Redirect URL to the same absolute URL.
-
+- Whatever redirect path you pick, JIRA_REDIRECT_URI must match it exactly in the Atlassian app.
+- The backend no longer derives redirect_uri from other envs or uses legacy fallbacks.

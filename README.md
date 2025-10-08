@@ -19,21 +19,22 @@ Now supports OAuth 2.0 (3LO) for Atlassian (Jira/Confluence):
   - POST /integrations/confluence/connect -> returns redirect_url "/auth/confluence/login"
 
 ### Canonical Atlassian OAuth Redirect URI (MANDATORY)
-The backend uses a single env-driven canonical redirect URI to ensure exact matching with Atlassian’s configuration.
+The backend uses a strict env-driven canonical redirect URI to ensure exact matching with Atlassian’s configuration.
 
 - Set in `integration_backend/.env`:
-  ATLASSIAN_OAUTH_REDIRECT_URI=https://vscode-internal-36721-beta.beta01.cloud.kavia.ai:3001/auth/jira/callback
+  JIRA_REDIRECT_URI=https://vscode-internal-36721-beta.beta01.cloud.kavia.ai:3001/auth/jira/callback
 
 - Register this exact value in your Atlassian Developer Console under Redirect URLs:
   https://vscode-internal-36721-beta.beta01.cloud.kavia.ai:3001/auth/jira/callback
 
 - Notes:
   - The login endpoints do NOT accept or override redirect_uri. They always use the backend’s env-driven canonical value.
-  - Compatibility alias routes are available (see below), but whatever redirect path you use MUST match this env exactly in the Atlassian app.
+  - Compatibility alias routes are available (see below), but the authorize URL is always constructed using JIRA_REDIRECT_URI.
   - If you change environments or domains, update both the env variable and the Atlassian app Redirect URL(s).
 
 You can verify which redirect URI is active at runtime:
 - GET /health/redirect-uri
+- GET /health/authorize-url (returns the exact authorize URL so you can confirm the encoded redirect_uri)
 
 ### Quick start (dev)
 1. Create and activate your environment.
@@ -41,7 +42,7 @@ You can verify which redirect URI is active at runtime:
    - `pip install -r integration_backend/requirements.txt`
 3. Create `.env` from example and fill in your values:
    - `cp integration_backend/.env.example integration_backend/.env`
-   - Set ATLASSIAN_CLOUD_BASE_URL, JIRA_OAUTH_CLIENT_ID/SECRET, ATLASSIAN_OAUTH_REDIRECT_URI, APP_FRONTEND_URL, etc.
+   - Set ATLASSIAN_CLOUD_BASE_URL, JIRA_OAUTH_CLIENT_ID/SECRET, JIRA_REDIRECT_URI, APP_FRONTEND_URL, etc.
    - For local development, keep `APP_ENV=development` and `DEV_MODE=true` to enable safe mocks.
 4. Run API:
    - `uvicorn src.api.main:app --reload --port 3001 --app-dir integration_backend`
@@ -130,15 +131,15 @@ Environment:
 Set the following environment variables (see `integration_backend/.env.example`):
 - ATLASSIAN_CLOUD_BASE_URL: e.g., https://your-team.atlassian.net
 - JIRA_OAUTH_CLIENT_ID, JIRA_OAUTH_CLIENT_SECRET
-- ATLASSIAN_OAUTH_REDIRECT_URI:
+- JIRA_REDIRECT_URI:
   IMPORTANT: Must exactly match what's registered in Atlassian.
   For this deployment it must be:
-  https://vscode-internal-21156-beta.beta01.cloud.kavia.ai:3001/api/oauth/atlassian/callback
+  https://vscode-internal-36721-beta.beta01.cloud.kavia.ai:3001/auth/jira/callback
 
 Required Jira OAuth variables:
 - JIRA_OAUTH_CLIENT_ID
 - JIRA_OAUTH_CLIENT_SECRET
-- ATLASSIAN_OAUTH_REDIRECT_URI (canonical, preferred)
+- JIRA_REDIRECT_URI (canonical)
 
 Optional (if using separate Confluence app):
 - CONFLUENCE_OAUTH_CLIENT_ID, CONFLUENCE_OAUTH_CLIENT_SECRET
@@ -164,14 +165,13 @@ Some deployments forward requests through a reverse proxy with an `/api` prefix 
 Strict redirect_uri equality:
 - The redirect_uri used in /auth/*/login to build the authorize URL MUST be identical to the redirect_uri used in the token exchange callbacks, and MUST match exactly what is registered in Atlassian (including scheme, host, port, and path).
 - Current required canonical value:
-  https://vscode-internal-21156-beta.beta01.cloud.kavia.ai:3001/api/oauth/atlassian/callback
+  https://vscode-internal-36721-beta.beta01.cloud.kavia.ai:3001/auth/jira/callback
 
-Environment fallback mapping:
-- The backend also accepts some NEXT_PUBLIC_* variants commonly used in frontend environments:
+Environment mapping:
+- The backend also accepts some NEXT_PUBLIC_* variants commonly used in frontend environments for non-redirect settings:
   - JIRA_OAUTH_CLIENT_ID falls back to ATLASSIAN_CLIENT_ID / NEXT_PUBLIC_JIRA_OAUTH_CLIENT_ID / NEXT_PUBLIC_JIRA_CLIENT_ID / NEXT_PUBLIC_ATLASSIAN_CLIENT_ID
   - JIRA_OAUTH_CLIENT_SECRET falls back to ATLASSIAN_CLIENT_SECRET / NEXT_PUBLIC_JIRA_OAUTH_CLIENT_SECRET / NEXT_PUBLIC_ATLASSIAN_CLIENT_SECRET
-  - Canonical redirect: ATLASSIAN_OAUTH_REDIRECT_URI (preferred) with fallbacks ATLASSIAN_REDIRECT_URI / JIRA_OAUTH_REDIRECT_URI / CONFLUENCE_OAUTH_REDIRECT_URI
-  - CONFLUENCE_OAUTH_* fall back to their Jira/Atlassian counterparts if not provided
+  - CONFLUENCE_OAUTH_* can fall back to their Jira/Atlassian counterparts if not provided
   - APP_FRONTEND_URL falls back to NEXT_PUBLIC_APP_FRONTEND_URL / NEXT_PUBLIC_FRONTEND_BASE_URL
   - ATLASSIAN_CLOUD_BASE_URL falls back to NEXT_PUBLIC_ATLASSIAN_CLOUD_BASE_URL
 
@@ -180,7 +180,7 @@ Environment fallback mapping:
   - Call GET /auth/jira/login?redirect=true to immediately navigate to Atlassian via backend 307 with `Cache-Control: no-store`, or
   - Call GET /auth/jira/login to obtain JSON {"url": "..."} and perform client-side navigation.
 - Confluence connect is analogous ("/auth/confluence/login").
-- The frontend must NOT pass `redirect_uri`; the backend controls this via `ATLASSIAN_OAUTH_REDIRECT_URI`.
+- The frontend must NOT pass `redirect_uri`; the backend controls this via `JIRA_REDIRECT_URI`.
 - After Atlassian redirects back to our backend callbacks, the backend will:
   - Exchange authorization code for tokens
   - Store access_token, refresh_token, and expiration on a resolved user:
@@ -241,7 +241,7 @@ Use the `X-Request-ID` value returned by the backend in error responses (500) to
 
 1. Configure env in integration_backend/.env (or container env):
    - JIRA_OAUTH_CLIENT_ID, JIRA_OAUTH_CLIENT_SECRET
-   - ATLASSIAN_OAUTH_REDIRECT_URI
+   - JIRA_REDIRECT_URI
    - APP_FRONTEND_URL (e.g., http://localhost:3000)
    - ATLASSIAN_CLOUD_BASE_URL (e.g., https://your-team.atlassian.net)
 
@@ -249,7 +249,7 @@ Use the `X-Request-ID` value returned by the backend in error responses (500) to
    uvicorn src.api.main:app --reload --port 3001 --app-dir integration_backend
 
 3. Visit GET /auth/jira/login to get authorize URL and complete consent.
-   Atlassian redirects to /api/oauth/atlassian/callback?code=...&state=... (or your chosen callback path).
+   Atlassian redirects to /auth/jira/callback?code=...&state=... (or your chosen callback path that matches JIRA_REDIRECT_URI).
 
 4. Callback behavior:
    - If no users exist, backend auto-creates a placeholder user and stores tokens.

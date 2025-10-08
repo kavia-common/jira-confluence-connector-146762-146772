@@ -7,17 +7,16 @@ Required environment variables (example .env is provided separately):
 - ATLASSIAN_CLOUD_BASE_URL: The base URL of your Atlassian Cloud site, e.g. "https://your-team.atlassian.net"
 - JIRA_OAUTH_CLIENT_ID: OAuth client ID for your Jira/Atlassian app
 - JIRA_OAUTH_CLIENT_SECRET: OAuth client secret for your Jira/Atlassian app
-- ATLASSIAN_OAUTH_REDIRECT_URI: Canonical Redirect URI configured in Atlassian developer console, e.g. "https://yourapp.com/auth/jira/callback"
-  This canonical value will be used for both Jira and Confluence by default unless an explicit provider-specific redirect is provided.
+- JIRA_REDIRECT_URI: Canonical Redirect URI configured in Atlassian developer console, e.g. "https://yourapp.com/auth/jira/callback"
+  This value is used for Jira authorization URL construction and must match exactly in Atlassian.
 
-Redirect URI precedence (never uses any frontend or port 3000 path):
-1) ATLASSIAN_OAUTH_REDIRECT_URI if set (used verbatim)
-2) ATLASSIAN_REDIRECT_URI (legacy alias)
-3) Provider-specific JIRA_OAUTH_REDIRECT_URI/CONFLUENCE_OAUTH_REDIRECT_URI
-4) Computed strictly from backend base origin + "/auth/{provider}/callback"
-   - Backend origin is resolved from PUBLIC_BASE_URL/BACKEND_PUBLIC_BASE_URL/… or BACKEND_BASE_URL/APP_BACKEND_URL
-   - Example desired Jira redirect: "https://<host>:3001/auth/jira/callback"
-   - Do not ever fallback to "/api/oauth/callback/jira" or any "http(s)://*:3000/*" URL
+Redirect URI precedence (strict):
+1) JIRA_REDIRECT_URI if set (used verbatim)
+2) Deployment default: https://vscode-internal-36721-beta.beta01.cloud.kavia.ai:3001/auth/jira/callback
+
+Notes:
+- No legacy/front-end/alias fallbacks are used.
+- Do not ever fallback to "/api/oauth/callback/jira" or any "http(s)://*:3000/*" URL.
 
 - CONFLUENCE_OAUTH_CLIENT_ID, CONFLUENCE_OAUTH_CLIENT_SECRET, CONFLUENCE_OAUTH_REDIRECT_URI:
   If you use a distinct app/client for Confluence. If not set, Jira values will be reused.
@@ -126,19 +125,10 @@ JIRA_SECRET_ENV_CANDIDATES: List[str] = [
     "NEXT_PUBLIC_JIRA_OAUTH_CLIENT_SECRET",
     "NEXT_PUBLIC_ATLASSIAN_CLIENT_SECRET",
 ]
-# Canonical Atlassian redirect URI env candidates (preferred first)
-ATLASSIAN_REDIRECT_ENV_CANDIDATES: List[str] = [
-    # Prefer explicitly requested JIRA_REDIRECT_URI variable
+# Canonical Atlassian redirect URI env (STRICT)
+JIRA_REDIRECT_ENV_CANDIDATES: List[str] = [
     "JIRA_REDIRECT_URI",
-    # Primary canonical Atlassian variable names (aliases kept for compatibility)
-    "ATLASSIAN_OAUTH_REDIRECT_URI",
-    "ATLASSIAN_REDIRECT_URI",
-    # Provider-specific fallbacks
-    "JIRA_OAUTH_REDIRECT_URI",
-    "CONFLUENCE_OAUTH_REDIRECT_URI",
 ]
-# Retain legacy list name for debug source mapping but point to canonical list
-JIRA_REDIRECT_ENV_CANDIDATES: List[str] = ATLASSIAN_REDIRECT_ENV_CANDIDATES
 FRONTEND_URL_ENV_CANDIDATES: List[str] = [
     "APP_FRONTEND_URL",
     "NEXT_PUBLIC_APP_FRONTEND_URL",
@@ -147,16 +137,6 @@ FRONTEND_URL_ENV_CANDIDATES: List[str] = [
 ATLASSIAN_BASE_ENV_CANDIDATES: List[str] = [
     "ATLASSIAN_CLOUD_BASE_URL",
     "NEXT_PUBLIC_ATLASSIAN_CLOUD_BASE_URL",
-]
-
-# Base URL that represents the externally reachable backend origin used to build redirect URIs
-PUBLIC_BASE_URL_ENV_CANDIDATES: List[str] = [
-    "ATLASSIAN_OAUTH_PUBLIC_BASE_URL",  # optional explicit override for OAuth public origin
-    "PUBLIC_BASE_URL",
-    "BACKEND_PUBLIC_BASE_URL",
-    # Add common non-public envs that still represent backend origin (no /api prefix)
-    "BACKEND_BASE_URL",
-    "APP_BACKEND_URL",
 ]
 
 
@@ -203,19 +183,6 @@ def _analyze_url(uri: str) -> Dict[str, Optional[str]]:
     except Exception:
         return {"valid": "false", "scheme": "", "netloc": "", "path": "", "reason": "parse_error"}
 
-def _build_public_url(base: str, path: str) -> str:
-    """
-    Build an absolute URL from a base (e.g., https://host:port) and path (e.g., /auth/jira/callback).
-    Ensures exactly one slash between base and path.
-    """
-    base = (base or "").strip()
-    path = (path or "").strip()
-    if not base:
-        return ""
-    if not path.startswith("/"):
-        path = "/" + path
-    return base.rstrip("/") + path
-
 
 class Settings(BaseModel):
     """
@@ -234,14 +201,11 @@ class Settings(BaseModel):
     # Atlassian base
     atlassian_base_url: Optional[str] = Field(default=_env_first("ATLASSIAN_CLOUD_BASE_URL", "NEXT_PUBLIC_ATLASSIAN_CLOUD_BASE_URL"))
 
-    # Public base URL for this backend (external origin)
-    public_base_url: Optional[str] = Field(default=_env_first(*PUBLIC_BASE_URL_ENV_CANDIDATES))
-
     # Jira OAuth (STRICT: redirect_uri must exactly match Atlassian console)
     jira_client_id: Optional[str] = Field(default=_env_first("JIRA_OAUTH_CLIENT_ID", "ATLASSIAN_CLIENT_ID", "NEXT_PUBLIC_JIRA_OAUTH_CLIENT_ID", "NEXT_PUBLIC_JIRA_CLIENT_ID", "NEXT_PUBLIC_ATLASSIAN_CLIENT_ID"))
     jira_client_secret: Optional[str] = Field(default=_env_first("JIRA_OAUTH_CLIENT_SECRET", "ATLASSIAN_CLIENT_SECRET", "NEXT_PUBLIC_JIRA_OAUTH_CLIENT_SECRET", "NEXT_PUBLIC_ATLASSIAN_CLIENT_SECRET"))
-    # Prefer a single canonical redirect for all Atlassian providers, explicitly honoring JIRA_REDIRECT_URI first
-    jira_redirect_uri: Optional[str] = Field(default=_env_first("JIRA_REDIRECT_URI", "ATLASSIAN_OAUTH_REDIRECT_URI", "ATLASSIAN_REDIRECT_URI", "JIRA_OAUTH_REDIRECT_URI"))
+    # Strictly use JIRA_REDIRECT_URI for Jira authorization URL construction
+    jira_redirect_uri: Optional[str] = Field(default=_env_first("JIRA_REDIRECT_URI"))
 
     # Confluence OAuth
     confluence_client_id: Optional[str] = Field(default=_env_first("CONFLUENCE_OAUTH_CLIENT_ID", "JIRA_OAUTH_CLIENT_ID", "ATLASSIAN_CLIENT_ID", "NEXT_PUBLIC_CONFLUENCE_OAUTH_CLIENT_ID", "NEXT_PUBLIC_JIRA_OAUTH_CLIENT_ID", "NEXT_PUBLIC_JIRA_CLIENT_ID", "NEXT_PUBLIC_ATLASSIAN_CLIENT_ID"))
@@ -270,48 +234,23 @@ def get_atlassian_base_url() -> str:
 
 def _choose_canonical_redirect(default_path: str) -> str:
     """
-    Choose the canonical Atlassian redirect URI.
+    Choose the Jira redirect URI.
 
-    Precedence:
-      1) ATLASSIAN_OAUTH_REDIRECT_URI (primary, use as-is if set)
-      2) ATLASSIAN_REDIRECT_URI (legacy alias)
-      3) Provider-specific envs: JIRA/CONFLUENCE redirect URIs
-      4) Build from discovered backend base URL + default_path
+    Strict precedence:
+      1) JIRA_REDIRECT_URI (used verbatim)
+      2) Deployment default: https://vscode-internal-36721-beta.beta01.cloud.kavia.ai:3001/auth/jira/callback
 
-    Backend base URL discovery (in order):
-      a) PUBLIC_BASE_URL-like candidates (PUBLIC_BASE_URL, BACKEND_PUBLIC_BASE_URL, etc.)
-      b) BACKEND_BASE_URL or APP_BACKEND_URL (no /api prefix) — common deployment envs
-
-    IMPORTANT:
-    - NEVER derive redirect_uri from any frontend URL (e.g., APP_FRONTEND_URL).
-    - redirect_uri must point to a backend route that is registered with Atlassian.
+    Notes:
+    - Never derive from frontend URL.
+    - Never use /api/oauth/callback/jira or port 3000.
     """
-    # 1-3: Try canonical/alias/provider-specific in order
-    val, _src = _resolve_env(ATLASSIAN_REDIRECT_ENV_CANDIDATES)
+    val, _src = _resolve_env(JIRA_REDIRECT_ENV_CANDIDATES)
     effective = (val or "").strip()
     if effective:
         return effective
 
-    # 4a: Fallback: build from PUBLIC_BASE_URL family (still backend origin)
-    pub_base = (_SETTINGS.public_base_url or "").strip()
-    if pub_base:
-        built = _build_public_url(pub_base, default_path)
-        if built:
-            return built
-
-    # 4b: Try common backend base envs explicitly if not captured earlier
-    backend_base, _src2 = _resolve_env(["BACKEND_BASE_URL", "APP_BACKEND_URL"])
-    backend_base = (backend_base or "").strip()
-    if backend_base:
-        built = _build_public_url(backend_base, default_path)
-        if built:
-            return built
-
-    # Final static safe default for this deployment to satisfy acceptance criteria if nothing else is set.
-    # IMPORTANT: Never fallback to frontend (port 3000) or any '/api/oauth/callback/jira' path.
-    # Default explicitly to the provided environment URL to meet acceptance criteria.
-    default_backend = "https://vscode-internal-36721-beta.beta01.cloud.kavia.ai:3001"
-    return default_backend + default_path
+    # Strict default to meet acceptance criteria
+    return "https://vscode-internal-36721-beta.beta01.cloud.kavia.ai:3001/auth/jira/callback"
 
 # PUBLIC_INTERFACE
 def get_jira_oauth_config() -> Dict[str, str]:
@@ -393,17 +332,15 @@ def get_jira_oauth_env_debug() -> Dict[str, Dict[str, str]]:
     redirect_val, redirect_src = _resolve_env(JIRA_REDIRECT_ENV_CANDIDATES)
     frontend_val, frontend_src = _resolve_env(FRONTEND_URL_ENV_CANDIDATES)
     base_val, base_src = _resolve_env(ATLASSIAN_BASE_ENV_CANDIDATES)
-    public_base_val, public_base_src = _resolve_env(PUBLIC_BASE_URL_ENV_CANDIDATES)
 
     # Determine the effective redirect URI that will be used by get_jira_oauth_config()
     explicit_redirect = redirect_val.strip() if redirect_val else ""
     if explicit_redirect:
         effective_redirect = explicit_redirect
-        effective_source = redirect_src or ""
+        effective_source = redirect_src or "JIRA_REDIRECT_URI"
     else:
-        built = _build_public_url(public_base_val, "/auth/jira/callback") if public_base_val else ""
-        effective_redirect = built
-        effective_source = public_base_src or ""
+        effective_redirect = "https://vscode-internal-36721-beta.beta01.cloud.kavia.ai:3001/auth/jira/callback"
+        effective_source = "default"
 
     return {
         "client_id": {
@@ -421,11 +358,6 @@ def get_jira_oauth_env_debug() -> Dict[str, Dict[str, str]]:
             "source": effective_source,
             "value_masked": _mask_secret(effective_redirect),
             "analysis": _analyze_url(effective_redirect) if effective_redirect else {"valid": "false", "reason": "empty"},
-        },
-        "public_base_url": {
-            "present": str(bool(public_base_val)).lower(),
-            "source": public_base_src or "",
-            "value_masked": _mask_secret(public_base_val),
         },
         "frontend_url": {
             "present": str(bool(frontend_val)).lower(),
