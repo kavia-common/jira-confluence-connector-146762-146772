@@ -24,6 +24,9 @@ Redirect URI precedence (never uses any frontend or port 3000 path):
 
 - APP_FRONTEND_URL: Frontend base URL to return the user to after auth success/failure (used ONLY for post-auth UI redirect, NEVER for Atlassian redirect_uri). Optional.
 
+Deployment default (if no envs are set in this environment):
+- Redirect URI defaults to https://vscode-internal-36721-beta.beta01.cloud.kavia.ai:3001/auth/jira/callback
+
 Note:
 - Scopes must be configured on Atlassian side. During authorization, pass the scopes needed by your app.
 """
@@ -302,8 +305,9 @@ def _choose_canonical_redirect(default_path: str) -> str:
 
     # Final static safe default for this deployment to satisfy acceptance criteria if nothing else is set.
     # IMPORTANT: Never fallback to frontend (port 3000) or any '/api/oauth/callback/jira' path.
-    # Note: This is only used when no envs are set; it points to the backend on port 3001.
-    return "https://vscode-internal-21156-beta.beta01.cloud.kavia.ai:3001" + default_path
+    # Default explicitly to the provided environment URL to meet acceptance criteria.
+    default_backend = "https://vscode-internal-36721-beta.beta01.cloud.kavia.ai:3001"
+    return default_backend + default_path
 
 # PUBLIC_INTERFACE
 def get_jira_oauth_config() -> Dict[str, str]:

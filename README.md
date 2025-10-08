@@ -22,10 +22,10 @@ Now supports OAuth 2.0 (3LO) for Atlassian (Jira/Confluence):
 The backend uses a single env-driven canonical redirect URI to ensure exact matching with Atlassian’s configuration.
 
 - Set in `integration_backend/.env`:
-  ATLASSIAN_OAUTH_REDIRECT_URI=https://vscode-internal-21156-beta.beta01.cloud.kavia.ai:3001/api/oauth/atlassian/callback
+  ATLASSIAN_OAUTH_REDIRECT_URI=https://vscode-internal-36721-beta.beta01.cloud.kavia.ai:3001/auth/jira/callback
 
 - Register this exact value in your Atlassian Developer Console under Redirect URLs:
-  https://vscode-internal-21156-beta.beta01.cloud.kavia.ai:3001/api/oauth/atlassian/callback
+  https://vscode-internal-36721-beta.beta01.cloud.kavia.ai:3001/auth/jira/callback
 
 - Notes:
   - The login endpoints do NOT accept or override redirect_uri. They always use the backend’s env-driven canonical value.
