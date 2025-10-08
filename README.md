@@ -122,7 +122,7 @@ Set the following environment variables (see `integration_backend/.env.example`)
 - JIRA_OAUTH_CLIENT_ID, JIRA_OAUTH_CLIENT_SECRET
 - JIRA_OAUTH_REDIRECT_URI: e.g., https://yourapp.com/api/auth/jira/callback
   IMPORTANT: Must exactly match what's registered in Atlassian. For this deployment it must be:
-  https://vscode-internal-14727-beta.beta01.cloud.kavia.ai:3001/auth/jira/callback
+  https://vscode-internal-21156-beta.beta01.cloud.kavia.ai:3001/auth/jira/callback
 
 Required Jira OAuth variables:
 - JIRA_OAUTH_CLIENT_ID
@@ -154,7 +154,7 @@ Recommended Redirect URIs to configure in Atlassian:
 
 Strict redirect_uri equality:
 - The redirect_uri used in /auth/jira/login to build the authorize URL MUST be identical to the redirect_uri used in the token exchange (/auth/jira/callback), and MUST match exactly what is registered in Atlassian (including scheme, host, port, and path).
-- Current required value: https://vscode-internal-14727-beta.beta01.cloud.kavia.ai:3001/auth/jira/callback
+- Current required value: https://vscode-internal-21156-beta.beta01.cloud.kavia.ai:3001/auth/jira/callback
 
 - Jira: https://<backend-domain>/api/auth/jira/callback (if your proxy keeps `/api`), otherwise https://<backend-domain>/auth/jira/callback
 - Confluence: https://<backend-domain>/api/auth/confluence/callback (or without `/api` if your proxy strips it)
@@ -179,7 +179,7 @@ Environment fallback mapping:
     - Else if any user exists, we use the first one
     - Else we auto-create a placeholder user (email oauth-user-<uuid>@example.local)
   - Redirect to APP_FRONTEND_URL + "/oauth/jira?status=success&user_id=<id>&state=<optional>" for Jira
-    (Default APP_FRONTEND_URL if not set: https://vscode-internal-14727-beta.beta01.cloud.kavia.ai:3000)
+    (Default APP_FRONTEND_URL if not set: https://vscode-internal-21156-beta.beta01.cloud.kavia.ai:3000)
 - Your frontend should implement a route (/oauth/jira) to read these query params and update UI state — e.g., mark the provider as "Connected".
 - For CSRF mitigation, you can generate a state string on the frontend and pass it to /auth/*/login via ?state=..., and validate on your own after redirection.
 
