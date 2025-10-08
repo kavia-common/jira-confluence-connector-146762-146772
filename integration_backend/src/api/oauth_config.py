@@ -129,9 +129,6 @@ ATLASSIAN_REDIRECT_ENV_CANDIDATES: List[str] = [
     "ATLASSIAN_REDIRECT_URI",        # legacy/alias
     "JIRA_OAUTH_REDIRECT_URI",       # provider-specific fallback
     "CONFLUENCE_OAUTH_REDIRECT_URI", # provider-specific fallback
-    "NEXT_PUBLIC_ATLASSIAN_REDIRECT_URI",
-    "NEXT_PUBLIC_JIRA_OAUTH_REDIRECT_URI",
-    "NEXT_PUBLIC_CONFLUENCE_OAUTH_REDIRECT_URI",
 ]
 # Retain legacy list name for debug source mapping but point to canonical list
 JIRA_REDIRECT_ENV_CANDIDATES: List[str] = ATLASSIAN_REDIRECT_ENV_CANDIDATES
@@ -150,9 +147,6 @@ PUBLIC_BASE_URL_ENV_CANDIDATES: List[str] = [
     "ATLASSIAN_OAUTH_PUBLIC_BASE_URL",  # optional explicit override for OAuth public origin
     "PUBLIC_BASE_URL",
     "BACKEND_PUBLIC_BASE_URL",
-    "NEXT_PUBLIC_BACKEND_PUBLIC_BASE_URL",
-    "NEXT_PUBLIC_BACKEND_BASE_URL",
-    "NEXT_PUBLIC_BACKEND_URL",
     # Add common non-public envs that still represent backend origin (no /api prefix)
     "BACKEND_BASE_URL",
     "APP_BACKEND_URL",
@@ -240,12 +234,12 @@ class Settings(BaseModel):
     jira_client_id: Optional[str] = Field(default=_env_first("JIRA_OAUTH_CLIENT_ID", "ATLASSIAN_CLIENT_ID", "NEXT_PUBLIC_JIRA_OAUTH_CLIENT_ID", "NEXT_PUBLIC_JIRA_CLIENT_ID", "NEXT_PUBLIC_ATLASSIAN_CLIENT_ID"))
     jira_client_secret: Optional[str] = Field(default=_env_first("JIRA_OAUTH_CLIENT_SECRET", "ATLASSIAN_CLIENT_SECRET", "NEXT_PUBLIC_JIRA_OAUTH_CLIENT_SECRET", "NEXT_PUBLIC_ATLASSIAN_CLIENT_SECRET"))
     # Prefer a single canonical redirect for all Atlassian providers
-    jira_redirect_uri: Optional[str] = Field(default=_env_first("ATLASSIAN_OAUTH_REDIRECT_URI", "ATLASSIAN_REDIRECT_URI", "JIRA_OAUTH_REDIRECT_URI", "NEXT_PUBLIC_ATLASSIAN_REDIRECT_URI", "NEXT_PUBLIC_JIRA_OAUTH_REDIRECT_URI"))
+    jira_redirect_uri: Optional[str] = Field(default=_env_first("ATLASSIAN_OAUTH_REDIRECT_URI", "ATLASSIAN_REDIRECT_URI", "JIRA_OAUTH_REDIRECT_URI"))
 
     # Confluence OAuth
     confluence_client_id: Optional[str] = Field(default=_env_first("CONFLUENCE_OAUTH_CLIENT_ID", "JIRA_OAUTH_CLIENT_ID", "ATLASSIAN_CLIENT_ID", "NEXT_PUBLIC_CONFLUENCE_OAUTH_CLIENT_ID", "NEXT_PUBLIC_JIRA_OAUTH_CLIENT_ID", "NEXT_PUBLIC_JIRA_CLIENT_ID", "NEXT_PUBLIC_ATLASSIAN_CLIENT_ID"))
     confluence_client_secret: Optional[str] = Field(default=_env_first("CONFLUENCE_OAUTH_CLIENT_SECRET", "JIRA_OAUTH_CLIENT_SECRET", "ATLASSIAN_CLIENT_SECRET", "NEXT_PUBLIC_CONFLUENCE_OAUTH_CLIENT_SECRET", "NEXT_PUBLIC_JIRA_OAUTH_CLIENT_SECRET", "NEXT_PUBLIC_ATLASSIAN_CLIENT_SECRET"))
-    confluence_redirect_uri: Optional[str] = Field(default=_env_first("ATLASSIAN_OAUTH_REDIRECT_URI", "ATLASSIAN_REDIRECT_URI", "CONFLUENCE_OAUTH_REDIRECT_URI", "JIRA_OAUTH_REDIRECT_URI", "NEXT_PUBLIC_ATLASSIAN_REDIRECT_URI", "NEXT_PUBLIC_CONFLUENCE_OAUTH_REDIRECT_URI", "NEXT_PUBLIC_JIRA_OAUTH_REDIRECT_URI"))
+    confluence_redirect_uri: Optional[str] = Field(default=_env_first("ATLASSIAN_OAUTH_REDIRECT_URI", "ATLASSIAN_REDIRECT_URI", "CONFLUENCE_OAUTH_REDIRECT_URI", "JIRA_OAUTH_REDIRECT_URI"))
 
 
 # Load settings once at startup. To pick up new envs, restart the server process.
