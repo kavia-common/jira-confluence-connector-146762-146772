@@ -392,6 +392,35 @@ def health_redirect_uri():
     """
     return _ocean_response(get_active_redirect_uris_debug(), "active redirect URIs")
 
+# PUBLIC_INTERFACE
+@app.get(
+    "/health/authorize-url",
+    tags=["Health"],
+    summary="Verification: Jira authorize URL (no redirect, no state)",
+    description="Returns the Atlassian authorize URL that would be used by /auth/jira/login with default scopes and no state. Use this to verify the exact redirect_uri parameter.",
+)
+def health_authorize_url_probe():
+    """
+    Build and return the Atlassian authorize URL using the current Jira OAuth config without redirecting.
+    This is intended for verification of the redirect_uri parameter.
+    """
+    cfg = get_jira_oauth_config()
+    client_id = (cfg.get("client_id") or "").strip()
+    redirect_uri = (cfg.get("redirect_uri") or "").strip()
+    if not client_id or not redirect_uri:
+        return _ocean_response(
+            {
+                "url": None,
+                "error": "missing_config",
+                "client_id_present": bool(client_id),
+                "redirect_uri_present": bool(redirect_uri),
+            },
+            "oauth not configured",
+        )
+    default_scopes = "read:jira-work read:jira-user offline_access"
+    url = build_atlassian_authorize_url(client_id=client_id, redirect_uri=redirect_uri, scopes=default_scopes, state=None)
+    return _ocean_response({"url": url}, "authorize url")
+
 
 # Users (Public)
 
@@ -510,7 +539,7 @@ def jira_login(
                 status_code=400,
                 content={
                     "status": "error",
-                    "message": "Jira OAuth is not fully configured. Provide JIRA_OAUTH_CLIENT_ID, JIRA_OAUTH_CLIENT_SECRET, and JIRA_OAUTH_REDIRECT_URI (exact value from Atlassian app).",
+                    "message": "Jira OAuth is not fully configured. Provide JIRA_OAUTH_CLIENT_ID, JIRA_OAUTH_CLIENT_SECRET, and ATLASSIAN_OAUTH_REDIRECT_URI (exact value from Atlassian app).",
                     "missing": missing,
                     "details": {
                         "reasons": reasons,
@@ -552,6 +581,7 @@ def jira_login(
             has_state=bool(state),
             scope_count=(len(scopes.split()) if scopes else 0),
             configured_redirect_uri_present=bool(redirect_uri),
+            configured_redirect_uri=redirect_uri,
             redirect_uri_analysis=redirect_analysis,
             env_sources={
                 "client_id": env_debug["client_id"]["source"],
@@ -955,6 +985,8 @@ def confluence_login(request: Request, state: Optional[str] = None, scope: Optio
             authorize_endpoint=authorize_url,
             has_state=bool(state),
             scope_count=(len(scopes.split()) if scopes else 0),
+            configured_redirect_uri_present=bool(redirect_uri),
+            configured_redirect_uri=redirect_uri,
         )
         return RedirectResponse(url)
     except HTTPException:

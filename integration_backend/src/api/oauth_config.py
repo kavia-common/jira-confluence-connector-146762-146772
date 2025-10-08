@@ -13,7 +13,7 @@ Required environment variables (example .env is provided separately):
 - CONFLUENCE_OAUTH_CLIENT_ID, CONFLUENCE_OAUTH_CLIENT_SECRET, CONFLUENCE_OAUTH_REDIRECT_URI:
   If you use a distinct app/client for Confluence. If not set, Jira values will be reused.
 
-- APP_FRONTEND_URL: Frontend base URL to return the user to after auth success/failure (used for guiding the frontend). Optional.
+- APP_FRONTEND_URL: Frontend base URL to return the user to after auth success/failure (used ONLY for post-auth UI redirect, NEVER for Atlassian redirect_uri). Optional.
 
 Note:
 - Scopes must be configured on Atlassian side. During authorization, pass the scopes needed by your app.
@@ -262,13 +262,17 @@ def _choose_canonical_redirect(default_path: str) -> str:
       2) ATLASSIAN_REDIRECT_URI (legacy alias)
       3) Provider-specific: JIRA/CONFLUENCE
       4) Build from PUBLIC_BASE_URL + default_path
+
+    IMPORTANT:
+    - We NEVER derive redirect_uri from any frontend URL.
+    - redirect_uri must point to a backend route that is registered with Atlassian.
     """
     # Try canonical/alias/provider-specific in order
     val, _src = _resolve_env(ATLASSIAN_REDIRECT_ENV_CANDIDATES)
     effective = (val or "").strip()
     if effective:
         return effective
-    # Fallback: build from PUBLIC_BASE_URL
+    # Fallback: build from PUBLIC_BASE_URL (still backend origin), never from frontend settings
     pub_base = (_SETTINGS.public_base_url or "").strip()
     return _build_public_url(pub_base, default_path) if pub_base else ""
 
