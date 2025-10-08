@@ -419,7 +419,8 @@ def health_authorize_url_probe():
         )
     default_scopes = "read:jira-work read:jira-user offline_access"
     url = build_atlassian_authorize_url(client_id=client_id, redirect_uri=redirect_uri, scopes=default_scopes, state=None)
-    return _ocean_response({"url": url}, "authorize url")
+    # Also attach the raw redirect_uri for assertive verification
+    return _ocean_response({"url": url, "redirect_uri": redirect_uri}, "authorize url")
 
 
 # Users (Public)
@@ -598,7 +599,14 @@ def jira_login(
             response.headers["Cache-Control"] = "no-store"
             return response
 
-        # Return 200 with the URL for clients to navigate
+        # Return 200 with the URL for clients to navigate and log it for verification
+        _log_event(
+            logging.INFO,
+            "oauth_authorize_url_echo",
+            request,
+            provider=provider,
+            authorize_url=url,
+        )
         return JSONResponse(status_code=200, content={"url": url})
     except HTTPException:
         APP_LOGGER.exception("OAuth login HTTPException", extra={
@@ -987,6 +995,14 @@ def confluence_login(request: Request, state: Optional[str] = None, scope: Optio
             scope_count=(len(scopes.split()) if scopes else 0),
             configured_redirect_uri_present=bool(redirect_uri),
             configured_redirect_uri=redirect_uri,
+        )
+        # Echo built authorize URL for verification in logs
+        _log_event(
+            logging.INFO,
+            "oauth_authorize_url_echo",
+            request,
+            provider=provider,
+            authorize_url=url,
         )
         return RedirectResponse(url)
     except HTTPException:

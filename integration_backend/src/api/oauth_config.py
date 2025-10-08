@@ -7,8 +7,15 @@ Required environment variables (example .env is provided separately):
 - ATLASSIAN_CLOUD_BASE_URL: The base URL of your Atlassian Cloud site, e.g. "https://your-team.atlassian.net"
 - JIRA_OAUTH_CLIENT_ID: OAuth client ID for your Jira/Atlassian app
 - JIRA_OAUTH_CLIENT_SECRET: OAuth client secret for your Jira/Atlassian app
-- ATLASSIAN_OAUTH_REDIRECT_URI: Canonical Redirect URI configured in Atlassian developer console, e.g. "https://yourapp.com/api/oauth/atlassian/callback"
+- ATLASSIAN_OAUTH_REDIRECT_URI: Canonical Redirect URI configured in Atlassian developer console, e.g. "https://yourapp.com/auth/jira/callback"
   This canonical value will be used for both Jira and Confluence by default unless an explicit provider-specific redirect is provided.
+
+Redirect URI precedence (never uses frontend):
+1) ATLASSIAN_OAUTH_REDIRECT_URI if set
+2) ATLASSIAN_REDIRECT_URI (legacy alias)
+3) Provider-specific JIRA_OAUTH_REDIRECT_URI/CONFLUENCE_OAUTH_REDIRECT_URI
+4) Computed from backend base origin + "/auth/{provider}/callback"
+   - Backend origin is resolved from PUBLIC_BASE_URL/BACKEND_PUBLIC_BASE_URL/… or BACKEND_BASE_URL/APP_BACKEND_URL
 
 - CONFLUENCE_OAUTH_CLIENT_ID, CONFLUENCE_OAUTH_CLIENT_SECRET, CONFLUENCE_OAUTH_REDIRECT_URI:
   If you use a distinct app/client for Confluence. If not set, Jira values will be reused.
@@ -138,11 +145,15 @@ ATLASSIAN_BASE_ENV_CANDIDATES: List[str] = [
 
 # Base URL that represents the externally reachable backend origin used to build redirect URIs
 PUBLIC_BASE_URL_ENV_CANDIDATES: List[str] = [
+    "ATLASSIAN_OAUTH_PUBLIC_BASE_URL",  # optional explicit override for OAuth public origin
     "PUBLIC_BASE_URL",
     "BACKEND_PUBLIC_BASE_URL",
     "NEXT_PUBLIC_BACKEND_PUBLIC_BASE_URL",
     "NEXT_PUBLIC_BACKEND_BASE_URL",
     "NEXT_PUBLIC_BACKEND_URL",
+    # Add common non-public envs that still represent backend origin (no /api prefix)
+    "BACKEND_BASE_URL",
+    "APP_BACKEND_URL",
 ]
 
 
@@ -257,24 +268,43 @@ def get_atlassian_base_url() -> str:
 def _choose_canonical_redirect(default_path: str) -> str:
     """
     Choose the canonical Atlassian redirect URI.
-    Priority:
-      1) ATLASSIAN_OAUTH_REDIRECT_URI (primary)
+
+    Precedence:
+      1) ATLASSIAN_OAUTH_REDIRECT_URI (primary, use as-is if set)
       2) ATLASSIAN_REDIRECT_URI (legacy alias)
-      3) Provider-specific: JIRA/CONFLUENCE
-      4) Build from PUBLIC_BASE_URL + default_path
+      3) Provider-specific envs: JIRA/CONFLUENCE redirect URIs
+      4) Build from discovered backend base URL + default_path
+
+    Backend base URL discovery (in order):
+      a) PUBLIC_BASE_URL-like candidates (PUBLIC_BASE_URL, BACKEND_PUBLIC_BASE_URL, etc.)
+      b) BACKEND_BASE_URL or APP_BACKEND_URL (no /api prefix) — common deployment envs
 
     IMPORTANT:
-    - We NEVER derive redirect_uri from any frontend URL.
+    - NEVER derive redirect_uri from any frontend URL (e.g., APP_FRONTEND_URL).
     - redirect_uri must point to a backend route that is registered with Atlassian.
     """
-    # Try canonical/alias/provider-specific in order
+    # 1-3: Try canonical/alias/provider-specific in order
     val, _src = _resolve_env(ATLASSIAN_REDIRECT_ENV_CANDIDATES)
     effective = (val or "").strip()
     if effective:
         return effective
-    # Fallback: build from PUBLIC_BASE_URL (still backend origin), never from frontend settings
+
+    # 4a: Fallback: build from PUBLIC_BASE_URL family (still backend origin)
     pub_base = (_SETTINGS.public_base_url or "").strip()
-    return _build_public_url(pub_base, default_path) if pub_base else ""
+    if pub_base:
+        built = _build_public_url(pub_base, default_path)
+        if built:
+            return built
+
+    # 4b: Try common backend base envs explicitly if not captured earlier
+    backend_base, _src2 = _resolve_env(["BACKEND_BASE_URL", "APP_BACKEND_URL"])
+    backend_base = (backend_base or "").strip()
+    if backend_base:
+        built = _build_public_url(backend_base, default_path)
+        if built:
+            return built
+
+    return ""
 
 # PUBLIC_INTERFACE
 def get_jira_oauth_config() -> Dict[str, str]:
