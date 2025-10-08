@@ -575,15 +575,15 @@ def jira_login(
     summary="Jira OAuth 2.0 callback",
     description=(
         "Handles Atlassian redirect, exchanges code for tokens, stores them on the first user (or targeted later), and redirects back to frontend.\n"
-        "Notes: Accepts standard 'state' from Atlassian; a legacy 'raw_state' is also accepted but optional."
+        "Notes: Accepts standard 'state' from Atlassian."
     ),
 )
-def _parse_state_map(raw_state: Optional[str]) -> Dict[str, Any]:
+def _parse_state_map(state: Optional[str]) -> Dict[str, Any]:
     """Best-effort parse of the OAuth 'state' to extract user hints."""
-    if not raw_state:
+    if not state:
         return {}
     # Already URL-decoded by FastAPI/Starlette
-    s = raw_state.strip()
+    s = state.strip()
     # Try JSON first
     try:
         j = json.loads(s)
@@ -661,7 +661,6 @@ async def jira_callback(
     db=Depends(get_db),
     code: Optional[str] = None,
     state: Optional[str] = None,
-    raw_state: Optional[str] = None,
 ):
     """
     Complete Jira OAuth 2.0 flow:
@@ -751,8 +750,8 @@ async def jira_callback(
             _log_event(logging.ERROR, "oauth_no_access_token", request, provider=provider, status_code=502)
             raise HTTPException(status_code=502, detail="No access token returned by Atlassian")
 
-        # Normalize state: prefer explicit state, fallback to legacy raw_state, else empty
-        effective_state = state if state is not None else raw_state
+        # Normalize state: use provided standard 'state' value
+        effective_state = state
 
         # Resolve or create a user to associate with this connection
         user, user_meta = _ensure_target_user(db, request, effective_state)

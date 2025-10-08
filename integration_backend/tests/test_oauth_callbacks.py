@@ -82,7 +82,7 @@ def test_jira_callback_accepts_standard_state_without_raw_state(monkeypatch):
     _clear_users()
 
     client = TestClient(app, follow_redirects=False)
-    # Simulate Atlassian redirect with code and state only (no raw_state)
+    # Simulate Atlassian redirect with code and standard 'state' only
     resp = client.get("/auth/jira/callback?code=demo&state=kc-oauth")
     assert resp.status_code in (302, 307)
 
