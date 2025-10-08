@@ -7,8 +7,8 @@ Canonical Atlassian OAuth Redirect URI
   - ATLASSIAN_OAUTH_REDIRECT_URI (preferred)
   - Fallbacks: ATLASSIAN_REDIRECT_URI, JIRA_OAUTH_REDIRECT_URI, CONFLUENCE_OAUTH_REDIRECT_URI
 - The exact value must be registered in the Atlassian Developer Console under Redirect URLs.
-- Example:
-  https://vscode-internal-40486-beta.beta01.cloud.kavia.ai:3001/api/oauth/atlassian/callback
+- Example (canonical for this environment; register this exact URL in Atlassian Developer Console):
+  https://vscode-internal-21156-beta.beta01.cloud.kavia.ai:3001/api/oauth/atlassian/callback
   Alternatively you can use:
   https://<backend-domain>/auth/jira/callback
   https://<backend-domain>/api/auth/jira/callback

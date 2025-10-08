@@ -7,7 +7,8 @@ Required environment variables (example .env is provided separately):
 - ATLASSIAN_CLOUD_BASE_URL: The base URL of your Atlassian Cloud site, e.g. "https://your-team.atlassian.net"
 - JIRA_OAUTH_CLIENT_ID: OAuth client ID for your Jira/Atlassian app
 - JIRA_OAUTH_CLIENT_SECRET: OAuth client secret for your Jira/Atlassian app
-- JIRA_OAUTH_REDIRECT_URI: Redirect URI configured in Atlassian developer console, e.g. "https://yourapp.com/api/auth/jira/callback"
+- ATLASSIAN_OAUTH_REDIRECT_URI: Canonical Redirect URI configured in Atlassian developer console, e.g. "https://yourapp.com/api/oauth/atlassian/callback"
+  This canonical value will be used for both Jira and Confluence by default unless an explicit provider-specific redirect is provided.
 
 - CONFLUENCE_OAUTH_CLIENT_ID, CONFLUENCE_OAUTH_CLIENT_SECRET, CONFLUENCE_OAUTH_REDIRECT_URI:
   If you use a distinct app/client for Confluence. If not set, Jira values will be reused.
