@@ -484,12 +484,17 @@ def jira_login(
         app_env = (cfg.get("app_env") or "production").lower()
         dev_mode = str(cfg.get("dev_mode") or "").lower() in ("true", "1", "yes")
 
-        # Hard guard: if ATLASSIAN_OAUTH_REDIRECT_URI is set, override to ensure exact match
+        # Hard guard: if a redirect override is set in env, use it verbatim (check JIRA_REDIRECT_URI first)
         # Otherwise reconstruct from backend public base to avoid any frontend-derived values.
         try:
-            atl_override = os.getenv("ATLASSIAN_OAUTH_REDIRECT_URI", "").strip()
-            if atl_override:
-                redirect_uri = atl_override
+            override = (
+                os.getenv("JIRA_REDIRECT_URI", "").strip()
+                or os.getenv("ATLASSIAN_OAUTH_REDIRECT_URI", "").strip()
+                or os.getenv("ATLASSIAN_REDIRECT_URI", "").strip()
+                or os.getenv("JIRA_OAUTH_REDIRECT_URI", "").strip()
+            )
+            if override:
+                redirect_uri = override
             else:
                 # Import builder lazily to avoid circulars
                 from src.api.oauth_config import _choose_canonical_redirect  # type: ignore

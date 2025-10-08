@@ -128,10 +128,14 @@ JIRA_SECRET_ENV_CANDIDATES: List[str] = [
 ]
 # Canonical Atlassian redirect URI env candidates (preferred first)
 ATLASSIAN_REDIRECT_ENV_CANDIDATES: List[str] = [
-    "ATLASSIAN_OAUTH_REDIRECT_URI",  # primary canonical
-    "ATLASSIAN_REDIRECT_URI",        # legacy/alias
-    "JIRA_OAUTH_REDIRECT_URI",       # provider-specific fallback
-    "CONFLUENCE_OAUTH_REDIRECT_URI", # provider-specific fallback
+    # Prefer explicitly requested JIRA_REDIRECT_URI variable
+    "JIRA_REDIRECT_URI",
+    # Primary canonical Atlassian variable names (aliases kept for compatibility)
+    "ATLASSIAN_OAUTH_REDIRECT_URI",
+    "ATLASSIAN_REDIRECT_URI",
+    # Provider-specific fallbacks
+    "JIRA_OAUTH_REDIRECT_URI",
+    "CONFLUENCE_OAUTH_REDIRECT_URI",
 ]
 # Retain legacy list name for debug source mapping but point to canonical list
 JIRA_REDIRECT_ENV_CANDIDATES: List[str] = ATLASSIAN_REDIRECT_ENV_CANDIDATES
@@ -236,8 +240,8 @@ class Settings(BaseModel):
     # Jira OAuth (STRICT: redirect_uri must exactly match Atlassian console)
     jira_client_id: Optional[str] = Field(default=_env_first("JIRA_OAUTH_CLIENT_ID", "ATLASSIAN_CLIENT_ID", "NEXT_PUBLIC_JIRA_OAUTH_CLIENT_ID", "NEXT_PUBLIC_JIRA_CLIENT_ID", "NEXT_PUBLIC_ATLASSIAN_CLIENT_ID"))
     jira_client_secret: Optional[str] = Field(default=_env_first("JIRA_OAUTH_CLIENT_SECRET", "ATLASSIAN_CLIENT_SECRET", "NEXT_PUBLIC_JIRA_OAUTH_CLIENT_SECRET", "NEXT_PUBLIC_ATLASSIAN_CLIENT_SECRET"))
-    # Prefer a single canonical redirect for all Atlassian providers
-    jira_redirect_uri: Optional[str] = Field(default=_env_first("ATLASSIAN_OAUTH_REDIRECT_URI", "ATLASSIAN_REDIRECT_URI", "JIRA_OAUTH_REDIRECT_URI"))
+    # Prefer a single canonical redirect for all Atlassian providers, explicitly honoring JIRA_REDIRECT_URI first
+    jira_redirect_uri: Optional[str] = Field(default=_env_first("JIRA_REDIRECT_URI", "ATLASSIAN_OAUTH_REDIRECT_URI", "ATLASSIAN_REDIRECT_URI", "JIRA_OAUTH_REDIRECT_URI"))
 
     # Confluence OAuth
     confluence_client_id: Optional[str] = Field(default=_env_first("CONFLUENCE_OAUTH_CLIENT_ID", "JIRA_OAUTH_CLIENT_ID", "ATLASSIAN_CLIENT_ID", "NEXT_PUBLIC_CONFLUENCE_OAUTH_CLIENT_ID", "NEXT_PUBLIC_JIRA_OAUTH_CLIENT_ID", "NEXT_PUBLIC_JIRA_CLIENT_ID", "NEXT_PUBLIC_ATLASSIAN_CLIENT_ID"))
