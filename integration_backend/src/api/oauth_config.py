@@ -20,6 +20,7 @@ Note:
 from __future__ import annotations
 
 import os
+import urllib.parse
 from typing import Dict, Optional
 from pydantic import BaseModel, Field
 
@@ -60,26 +61,36 @@ class Settings(BaseModel):
     confluence_redirect_uri: Optional[str] = Field(default=_env_first("CONFLUENCE_OAUTH_REDIRECT_URI", "JIRA_OAUTH_REDIRECT_URI", "ATLASSIAN_REDIRECT_URI", "NEXT_PUBLIC_CONFLUENCE_OAUTH_REDIRECT_URI", "NEXT_PUBLIC_JIRA_OAUTH_REDIRECT_URI", "NEXT_PUBLIC_ATLASSIAN_REDIRECT_URI"))
 
 
+# Load settings once at startup. To pick up new envs, restart the server process.
 _SETTINGS = Settings()
+
+
+def _is_truthy(val: Optional[str | bool]) -> bool:
+    """Utility to parse typical truthy env flag values."""
+    if isinstance(val, bool):
+        return val
+    if not val:
+        return False
+    return str(val).strip().lower() in ("1", "true", "yes", "on")
 
 
 # PUBLIC_INTERFACE
 def get_atlassian_base_url() -> str:
     """Return Atlassian Cloud base URL (e.g., https://your-team.atlassian.net)."""
-    return _SETTINGS.atlassian_base_url or ""
+    return (_SETTINGS.atlassian_base_url or "").strip()
 
 
 # PUBLIC_INTERFACE
 def get_jira_oauth_config() -> Dict[str, str]:
     """Return Jira OAuth 2.0 config from the environment with robust fallbacks."""
     return {
-        "client_id": _SETTINGS.jira_client_id or "",
-        "client_secret": _SETTINGS.jira_client_secret or "",
-        "redirect_uri": _SETTINGS.jira_redirect_uri or "",
+        "client_id": (_SETTINGS.jira_client_id or "").strip(),
+        "client_secret": (_SETTINGS.jira_client_secret or "").strip(),
+        "redirect_uri": (_SETTINGS.jira_redirect_uri or "").strip(),
         "base_url": get_atlassian_base_url(),
         "dev_mode": str(_SETTINGS.dev_mode).lower(),
-        "app_env": _SETTINGS.app_env,
-        "frontend_url": _SETTINGS.frontend_url or "",
+        "app_env": (_SETTINGS.app_env or "production").strip(),
+        "frontend_url": (_SETTINGS.frontend_url or "").strip(),
     }
 
 
@@ -90,17 +101,43 @@ def get_confluence_oauth_config() -> Dict[str, str]:
     Falls back to Jira or generic Atlassian config if dedicated Confluence values are not provided.
     """
     return {
-        "client_id": _SETTINGS.confluence_client_id or "",
-        "client_secret": _SETTINGS.confluence_client_secret or "",
-        "redirect_uri": _SETTINGS.confluence_redirect_uri or "",
+        "client_id": (_SETTINGS.confluence_client_id or "").strip(),
+        "client_secret": (_SETTINGS.confluence_client_secret or "").strip(),
+        "redirect_uri": (_SETTINGS.confluence_redirect_uri or "").strip(),
         "base_url": get_atlassian_base_url(),
         "dev_mode": str(_SETTINGS.dev_mode).lower(),
-        "app_env": _SETTINGS.app_env,
-        "frontend_url": _SETTINGS.frontend_url or "",
+        "app_env": (_SETTINGS.app_env or "production").strip(),
+        "frontend_url": (_SETTINGS.frontend_url or "").strip(),
     }
 
 
 # PUBLIC_INTERFACE
 def get_frontend_base_url_default() -> str:
     """Return frontend base URL to guide redirects after auth."""
-    return _SETTINGS.frontend_url or ""
+    return (_SETTINGS.frontend_url or "").strip()
+
+
+# PUBLIC_INTERFACE
+def is_jira_oauth_configured() -> bool:
+    """Quick boolean check to determine if Jira OAuth has required fields."""
+    cfg = get_jira_oauth_config()
+    return bool(cfg.get("client_id")) and bool(cfg.get("redirect_uri"))
+
+
+# PUBLIC_INTERFACE
+def build_atlassian_authorize_url(client_id: str, redirect_uri: str, scopes: str, state: Optional[str] = None) -> str:
+    """
+    Build the Atlassian OAuth2 authorize URL for the given parameters.
+    """
+    base = "https://auth.atlassian.com/authorize"
+    params = {
+        "audience": "api.atlassian.com",
+        "client_id": client_id,
+        "scope": scopes,
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+        "prompt": "consent",
+    }
+    if state:
+        params["state"] = state
+    return f"{base}?{urllib.parse.urlencode(params)}"

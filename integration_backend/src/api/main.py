@@ -28,6 +28,7 @@ from src.api.oauth_config import (
     get_jira_oauth_config,
     get_confluence_oauth_config,
     get_frontend_base_url_default,
+    build_atlassian_authorize_url,
 )
 
 from src.api.schemas import (
@@ -344,7 +345,7 @@ def jira_login(request: Request, state: Optional[str] = None, scope: Optional[st
         state: Optional opaque state to be returned by Atlassian to mitigate CSRF (frontend should generate and verify).
         scope: Optional space-separated scopes. If not provided, defaults to commonly used scopes configured in your app.
     Returns:
-        Redirect to Atlassian authorization endpoint.
+        200 JSON with {"url": "<authorize_url>"} for programmatic use, or 400 with details if misconfigured.
     """
     provider = "jira"
     try:
@@ -358,38 +359,37 @@ def jira_login(request: Request, state: Optional[str] = None, scope: Optional[st
         )
 
         cfg = get_jira_oauth_config()
-        client_id = cfg.get("client_id")
-        redirect_uri = cfg.get("redirect_uri")
+        client_id = (cfg.get("client_id") or "").strip()
+        redirect_uri = (cfg.get("redirect_uri") or "").strip()
         app_env = (cfg.get("app_env") or "production").lower()
-        dev_mode = (cfg.get("dev_mode") or "false") in ("true", "1", "yes")
+        dev_mode = str(cfg.get("dev_mode") or "").lower() in ("true", "1", "yes")
+
+        # If not configured, return mock in dev, else 400
         if not client_id or not redirect_uri:
-            # Dev-safe behavior: allow mock response in dev
             if dev_mode or app_env == "development":
                 mock_url = "https://auth.atlassian.com/authorize?mock=true"
                 _log_event(logging.WARNING, "oauth_login_mock_dev", request, provider=provider, mock_redirect=mock_url)
                 return JSONResponse(
                     status_code=200,
-                    content={
-                        "status": "success",
-                        "message": "DEV mode: Jira OAuth not configured, returning mock authorization URL.",
-                        "data": {"redirect_url": mock_url, "provider": provider},
-                    },
+                    content={"url": mock_url, "provider": provider, "dev": True},
                 )
-            _log_event(logging.ERROR, "oauth_login_config_error", request, provider=provider)
-            # Return a clear 400 for misconfiguration
+            _log_event(
+                logging.ERROR,
+                "oauth_login_config_error",
+                request,
+                provider=provider,
+                missing={"client_id": bool(client_id), "redirect_uri": bool(redirect_uri)},
+            )
             return JSONResponse(
                 status_code=400,
                 content={
                     "status": "error",
                     "message": "Jira OAuth is not configured. Set JIRA_OAUTH_CLIENT_ID and JIRA_OAUTH_REDIRECT_URI.",
-                    "missing": {
-                        "client_id": bool(client_id),
-                        "redirect_uri": bool(redirect_uri),
-                    },
+                    "missing": {"client_id": bool(client_id), "redirect_uri": bool(redirect_uri)},
                 },
             )
 
-        # Default scopes can be tailored based on your app setup in Atlassian developer console
+        # Default scopes recommended
         default_scopes = [
             "read:jira-work",
             "read:jira-user",
@@ -397,29 +397,18 @@ def jira_login(request: Request, state: Optional[str] = None, scope: Optional[st
         ]
         scopes = scope or " ".join(default_scopes)
 
-        authorize_url = "https://auth.atlassian.com/authorize"
-        params = {
-            "audience": "api.atlassian.com",
-            "client_id": client_id,
-            "scope": scopes,
-            "redirect_uri": redirect_uri,
-            "response_type": "code",
-            "prompt": "consent",
-        }
-        if state:
-            params["state"] = state
-
-        url = f"{authorize_url}?{urllib.parse.urlencode(params)}"
+        url = build_atlassian_authorize_url(client_id=client_id, redirect_uri=redirect_uri, scopes=scopes, state=state)
         _log_event(
             logging.INFO,
             "oauth_login_redirect",
             request,
             provider=provider,
-            authorize_endpoint=authorize_url,
+            authorize_endpoint="https://auth.atlassian.com/authorize",
             has_state=bool(state),
             scope_count=(len(scopes.split()) if scopes else 0),
         )
-        return RedirectResponse(url)
+        # Return 200 with the URL for clients to navigate
+        return JSONResponse(status_code=200, content={"url": url})
     except HTTPException:
         APP_LOGGER.exception("OAuth login HTTPException", extra={
             "request_id": getattr(request.state, "request_id", None),
