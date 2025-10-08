@@ -47,6 +47,16 @@ class JiraConnector(BaseConnector):
     def oauth_callback(
         self, code: str, tenant_id: str, state: Optional[str] = None
     ) -> ConnectionStatus:
+        """
+        Exchange authorization code for tokens, fetch accessible resources, and persist site selection.
+
+        Behavior:
+        - Exchanges code at https://auth.atlassian.com/oauth/token
+        - Calls https://api.atlassian.com/oauth/token/accessible-resources with the access_token
+        - Chooses a resource (first by default, or from state if provided)
+        - Persists tokens with metadata: {"resources": [...], "selected": {"id": <cloudId>, "url": <baseUrl>, "name": <name>}}
+        - Stores scopes and expires_at (now + expires_in)
+        """
         cfg = get_jira_oauth_config()
         client_id = cfg.get("client_id")
         client_secret = cfg.get("client_secret")
@@ -65,24 +75,109 @@ class JiraConnector(BaseConnector):
             "code": code,
             "redirect_uri": redirect_uri,
         }
-        with httpx.Client(timeout=20.0) as client:
-            resp = client.post(token_url, json=data, headers={"Content-Type": "application/json"})
-        if resp.status_code != 200:
-            raise HTTPException(status_code=502, detail="Token exchange failed")
-        tj = resp.json()
-        scopes = tj.get("scope", None)
-        expires_in = int(tj.get("expires_in") or 0)
-        expires_at = int(time.time()) + expires_in if expires_in > 0 else None
 
-        save_tokens(
-            db=self._db,  # type: ignore[attr-defined]
-            connector_id=self.connector_id,
-            tenant_id=tenant_id,
-            tokens={"access_token": tj.get("access_token"), "refresh_token": tj.get("refresh_token")},
-            scopes=scopes,
-            expires_at=expires_at,
-            metadata={"token_type": tj.get("token_type")},
-        )
+        with httpx.Client(timeout=20.0) as client:
+            # Exchange code for tokens
+            resp = client.post(token_url, json=data, headers={"Content-Type": "application/json"})
+            if resp.status_code != 200:
+                raise HTTPException(status_code=502, detail="Token exchange failed")
+            tj = resp.json()
+
+            access_token = tj.get("access_token")
+            refresh_token = tj.get("refresh_token")
+            token_type = tj.get("token_type")
+            scopes = tj.get("scope", None)
+            expires_in = int(tj.get("expires_in") or 0)
+            expires_at = int(time.time()) + expires_in if expires_in > 0 else None
+
+            # Fetch accessible resources
+            resources_url = "https://api.atlassian.com/oauth/token/accessible-resources"
+            resources: List[Dict[str, Any]] = []
+            selected: Optional[Dict[str, Any]] = None
+            if access_token:
+                r = client.get(
+                    resources_url,
+                    headers={
+                        "Authorization": f"Bearer {access_token}",
+                        "Accept": "application/json",
+                    },
+                )
+                if r.status_code == 200:
+                    try:
+                        resources = r.json() or []
+                    except Exception:
+                        resources = []
+
+            # If state contains a target resource/cloudId, try to select it
+            def _parse_state_for_selection(s: Optional[str]) -> Optional[Dict[str, str]]:
+                if not s:
+                    return None
+                try:
+                    j = json.loads(s)
+                    if isinstance(j, dict):
+                        if "cloudId" in j:
+                            return {"id": j.get("cloudId")}
+                        if "site" in j:
+                            return {"url": j.get("site")}
+                        if "baseUrl" in j:
+                            return {"url": j.get("baseUrl")}
+                    # also support querystring-like state
+                except Exception:
+                    pass
+                try:
+                    from urllib.parse import parse_qs
+                    qs = parse_qs(s)
+                    if "cloudId" in qs and qs.get("cloudId"):
+                        return {"id": qs.get("cloudId")[0]}
+                    if "site" in qs and qs.get("site"):
+                        return {"url": qs.get("site")[0]}
+                    if "baseUrl" in qs and qs.get("baseUrl"):
+                        return {"url": qs.get("baseUrl")[0]}
+                except Exception:
+                    pass
+                return None
+
+            selection_hint = _parse_state_for_selection(state)
+            # Choose resource: prefer state-driven match, else first resource
+            if resources:
+                if selection_hint:
+                    wanted_id = selection_hint.get("id")
+                    wanted_url = selection_hint.get("url")
+                    for res in resources:
+                        cid = res.get("id") or res.get("cloudId")  # shape varies in docs; prefer id
+                        burl = res.get("url") or res.get("baseUrl")
+                        if (wanted_id and cid == wanted_id) or (wanted_url and burl == wanted_url):
+                            selected = {
+                                "id": cid,
+                                "url": burl,
+                                "name": res.get("name"),
+                            }
+                            break
+                if not selected:
+                    first = resources[0]
+                    selected = {
+                        "id": first.get("id") or first.get("cloudId"),
+                        "url": first.get("url") or first.get("baseUrl"),
+                        "name": first.get("name"),
+                    }
+
+            # Persist tokens with metadata including resources and selected site
+            meta: Dict[str, Any] = {"token_type": token_type}
+            if resources:
+                meta["resources"] = resources
+            if selected:
+                meta["selected"] = selected
+
+            save_tokens(
+                db=self._db,  # type: ignore[attr-defined]
+                connector_id=self.connector_id,
+                tenant_id=tenant_id,
+                tokens={"access_token": access_token, "refresh_token": refresh_token},
+                scopes=scopes,
+                expires_at=expires_at,
+                metadata=meta,
+            )
+
         granted_scopes = (scopes.split() if isinstance(scopes, str) and scopes else None)
         return ConnectionStatus(connected=True, scopes=granted_scopes, expires_at=expires_at)
 

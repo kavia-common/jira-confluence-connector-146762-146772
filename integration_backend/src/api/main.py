@@ -806,128 +806,57 @@ async def jira_callback(
     state: Optional[str] = None,
 ):
     """
-    Complete Jira OAuth 2.0 flow:
-    - Exchange authorization code for access and refresh tokens
-    - Store tokens and expiry on an associated user (resolved from state, first user, or placeholder)
-    - Redirect to frontend with status
+    Jira OAuth callback handler that delegates token exchange/persistence to the Jira connector,
+    then redirects to the frontend success route.
+
+    Redirect:
+      APP_FRONTEND_URL + "/oauth/jira?status=success&tenant_id=<tid>&state=<state>&provider=jira"
+
+    Notes:
+      - Always return a 307 redirect with Cache-Control: no-store on success.
+      - This endpoint serves as a legacy callback; the canonical token handling lives in the Jira connector.
     """
     provider = "jira"
     _log_event(logging.INFO, "oauth_callback_received", request, provider=provider)
+    # Resolve tenant id from state if present; else use default
+    tenant_id = "default"
+    if state:
+        try:
+            j = json.loads(state)
+            if isinstance(j, dict) and j.get("tenant_id"):
+                tenant_id = str(j.get("tenant_id"))
+        except Exception:
+            # fall back to querystring parsing
+            try:
+                qs = urllib.parse.parse_qs(state)
+                if "tenant_id" in qs and qs.get("tenant_id"):
+                    tenant_id = str(qs.get("tenant_id")[0])
+            except Exception:
+                pass
     try:
         if not code:
             _log_event(logging.ERROR, "oauth_missing_code", request, provider=provider, status_code=400)
             raise HTTPException(status_code=400, detail="Missing authorization code")
 
-        cfg = get_jira_oauth_config()
-        client_id = cfg.get("client_id")
-        client_secret = cfg.get("client_secret")
-        redirect_uri = cfg.get("redirect_uri")
-        if not client_id or not client_secret or not redirect_uri:
-            # Distinguish config error as 400, not 500
-            _log_event(logging.ERROR, "oauth_callback_config_error", request, provider=provider, status_code=400)
-            raise HTTPException(
-                status_code=400,
-                detail="Jira OAuth is not configured. Missing client_id/client_secret/redirect_uri.",
-            )
+        # Delegate to Jira connector for token exchange/persistence (sync connector on sync thread)
+        from src.connectors.jira.impl import JiraConnector
+        connector = JiraConnector().with_db(db)
+        connector.oauth_callback(code=code, tenant_id=tenant_id, state=state)
 
-        token_url = "https://auth.atlassian.com/oauth/token"
-        data = {
-            "grant_type": "authorization_code",
-            "client_id": client_id,
-            "client_secret": client_secret,
-            "code": code,
-            "redirect_uri": redirect_uri,
-        }
-
-        _log_event(logging.INFO, "token_exchange_start", request, provider=provider)
-        async with httpx.AsyncClient(timeout=20.0) as client:
-            try:
-                token_resp = await client.post(token_url, json=data, headers={"Content-Type": "application/json"})
-            except httpx.RequestError as rex:
-                APP_LOGGER.exception("Token exchange request error", extra={
-                    "request_id": getattr(request.state, "request_id", None),
-                    "event": "token_exchange_error",
-                    "provider": provider,
-                    "path": request.url.path,
-                })
-                raise HTTPException(status_code=502, detail="Token exchange request failed") from rex
-
-        _log_event(
-            logging.INFO,
-            "token_exchange_response",
-            request,
-            provider=provider,
-            status_code=token_resp.status_code,
-        )
-
-        if token_resp.status_code != 200:
-            # Log failure without secrets
-            APP_LOGGER.error(
-                "Token exchange failed",
-                extra={
-                    "request_id": getattr(request.state, "request_id", None),
-                    "event": "token_exchange_failed",
-                    "provider": provider,
-                    "path": request.url.path,
-                    "status_code": token_resp.status_code,
-                },
-            )
-            raise HTTPException(status_code=502, detail="Token exchange failed")
-
-        token_json = token_resp.json()
-
-        access_token = token_json.get("access_token")
-        refresh_token = token_json.get("refresh_token")
-        expires_in = token_json.get("expires_in")  # seconds
-        _log_event(
-            logging.INFO,
-            "token_exchange_success",
-            request,
-            provider=provider,
-            access_token_present=bool(access_token),
-            refresh_token_present=bool(refresh_token),
-            expires_in=expires_in,
-        )
-
-        if not access_token:
-            _log_event(logging.ERROR, "oauth_no_access_token", request, provider=provider, status_code=502)
-            raise HTTPException(status_code=502, detail="No access token returned by Atlassian")
-
-        # Normalize state: use provided standard 'state' value
-        effective_state = state
-
-        # Resolve or create a user to associate with this connection
-        user, user_meta = _ensure_target_user(db, request, effective_state)
-
-        user.jira_token = access_token
-        user.jira_refresh_token = refresh_token
-        user.jira_expires_at = int(time.time()) + int(expires_in or 0)
-        # store base URL if known from env
-        from src.api.oauth_config import get_atlassian_base_url
-
-        user.jira_base_url = get_atlassian_base_url() or user.jira_base_url
-        db.commit()
-        db.refresh(user)
-
-        _log_event(logging.INFO, "oauth_user_token_persisted", request, provider=provider, user_id=user.id)
-
-        # Redirect back to frontend (UI return URL)
-        # Default route if FRONTEND not provided: https://vscode-internal-21156-beta.beta01.cloud.kavia.ai:3000/oauth/jira
+        # Build frontend redirect URL with required params
         frontend_base = get_frontend_base_url_default()
-        if not frontend_base:
-            # Use the required default from task
-            frontend_base = "https://vscode-internal-21156-beta.beta01.cloud.kavia.ai:3000"
-        # Preferred callback route for the UI
         return_path = "/oauth/jira"
-        # Preserve state and minimal info; do not leak tokens
         params = {
             "status": "success",
-            "state": (effective_state or ""),
-            "user_id": str(user.id),
+            "tenant_id": tenant_id,
+            "state": state or "",
+            "provider": "jira",
         }
-        redirect_to = f"{frontend_base.rstrip('/')}{return_path}?{urllib.parse.urlencode(params)}"
+        redirect_to = f"{frontend_base.rstrip('/')}{return_path}?{urllib.parse.urlencode(params)}" if frontend_base else f"/oauth/jira?{urllib.parse.urlencode(params)}"
         _log_event(logging.INFO, "frontend_redirect", request, provider=provider, redirect=redirect_to)
-        return RedirectResponse(redirect_to)
+        response = RedirectResponse(url=redirect_to, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+        response.headers["Cache-Control"] = "no-store"
+        return response
     except HTTPException:
         APP_LOGGER.exception("OAuth callback HTTPException", extra={
             "request_id": getattr(request.state, "request_id", None),
@@ -1517,6 +1446,7 @@ def jira_login_api_alias(
 async def jira_callback_api_alias(request: Request, db=Depends(get_db), code: Optional[str] = None, state: Optional[str] = None):
     """
     Alias wrapper for /auth/jira/callback to support '/api' prefixed routes.
+    Delegates to jira_callback which performs the redirect to frontend.
     """
     _log_event(logging.INFO, "oauth_alias_route_invoked", request, provider="jira", alias="/api/auth/jira/callback")
     return await jira_callback(request, db, code, state)
@@ -1564,7 +1494,7 @@ async def confluence_callback_api_alias(request: Request, db=Depends(get_db), co
 )
 async def atlassian_callback_alias(request: Request, db=Depends(get_db), code: Optional[str] = None, state: Optional[str] = None):
     """
-    Generic Atlassian callback alias that delegates to the Jira callback handler.
+    Generic Atlassian callback alias that delegates to the Jira callback handler and then redirects to frontend.
     If you are using a dedicated Confluence app/client with a distinct redirect URI,
     prefer '/api/auth/confluence/callback' to avoid mismatched redirect_uri during token exchange.
     """
