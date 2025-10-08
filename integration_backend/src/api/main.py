@@ -567,11 +567,13 @@ def jira_login(
         redirect_analysis = env_debug["redirect_uri"].get("analysis", {})
 
         # Build authorize URL using EXACT redirect_uri from env (no normalization)
+        # When redirect flag is false, we must not include a state parameter per acceptance criteria.
+        state_for_url = state if redirect else None
         url = build_atlassian_authorize_url(
             client_id=client_id,
             redirect_uri=redirect_uri,
             scopes=scopes,
-            state=state,
+            state=state_for_url,
         )
         _log_event(
             logging.INFO,
