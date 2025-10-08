@@ -131,7 +131,8 @@ class ConnectorToken(Base, TimestampMixin):
     encrypted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     scopes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # space-separated
     expires_at: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # epoch seconds
-    metadata: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # reserved
+    # NOTE: 'metadata' is reserved by SQLAlchemy Declarative API; use a different attribute name.
+    meta_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     def __repr__(self) -> str:

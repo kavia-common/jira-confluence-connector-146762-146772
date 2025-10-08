@@ -31,7 +31,7 @@ def save_tokens(
         row.encrypted = enc
         row.scopes = scopes
         row.expires_at = expires_at
-        row.metadata = json.dumps(metadata or {}) if metadata else row.metadata
+        row.meta_json = json.dumps(metadata or {}) if metadata else row.meta_json
     else:
         row = ConnectorToken(
             connector_id=connector_id,
@@ -40,7 +40,7 @@ def save_tokens(
             encrypted=enc,
             scopes=scopes,
             expires_at=expires_at,
-            metadata=json.dumps(metadata or {}) if metadata else None,
+            meta_json=json.dumps(metadata or {}) if metadata else None,
         )
         db.add(row)
     db.commit()
