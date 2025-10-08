@@ -12,7 +12,7 @@ Required environment variables (example .env is provided separately):
 
 Redirect URI precedence (strict):
 1) JIRA_REDIRECT_URI if set (used verbatim)
-2) Deployment default: https://vscode-internal-36721-beta.beta01.cloud.kavia.ai:3001/auth/jira/callback
+2) Deployment default: https://vscode-internal-29161-beta.beta01.cloud.kavia.ai:3001/auth/jira/callback
 
 Notes:
 - No legacy/front-end/alias fallbacks are used.
@@ -24,7 +24,7 @@ Notes:
 - APP_FRONTEND_URL: Frontend base URL to return the user to after auth success/failure (used ONLY for post-auth UI redirect, NEVER for Atlassian redirect_uri). Optional.
 
 Deployment default (if no envs are set in this environment):
-- Redirect URI defaults to https://vscode-internal-36721-beta.beta01.cloud.kavia.ai:3001/auth/jira/callback
+- Redirect URI defaults to https://vscode-internal-29161-beta.beta01.cloud.kavia.ai:3001/auth/jira/callback
 
 Note:
 - Scopes must be configured on Atlassian side. During authorization, pass the scopes needed by your app.
@@ -238,7 +238,7 @@ def _choose_canonical_redirect(default_path: str) -> str:
 
     Strict precedence:
       1) JIRA_REDIRECT_URI (used verbatim)
-      2) Deployment default: https://vscode-internal-36721-beta.beta01.cloud.kavia.ai:3001/auth/jira/callback
+      2) Deployment default: https://vscode-internal-29161-beta.beta01.cloud.kavia.ai:3001/auth/jira/callback
 
     Notes:
     - Never derive from frontend URL.
@@ -250,7 +250,7 @@ def _choose_canonical_redirect(default_path: str) -> str:
         return effective
 
     # Strict default to meet acceptance criteria
-    return "https://vscode-internal-36721-beta.beta01.cloud.kavia.ai:3001/auth/jira/callback"
+    return "https://vscode-internal-29161-beta.beta01.cloud.kavia.ai:3001/auth/jira/callback"
 
 # PUBLIC_INTERFACE
 def get_jira_oauth_config() -> Dict[str, str]:
@@ -339,7 +339,7 @@ def get_jira_oauth_env_debug() -> Dict[str, Dict[str, str]]:
         effective_redirect = explicit_redirect
         effective_source = redirect_src or "JIRA_REDIRECT_URI"
     else:
-        effective_redirect = "https://vscode-internal-36721-beta.beta01.cloud.kavia.ai:3001/auth/jira/callback"
+        effective_redirect = "https://vscode-internal-29161-beta.beta01.cloud.kavia.ai:3001/auth/jira/callback"
         effective_source = "default"
 
     return {

@@ -22,10 +22,10 @@ Now supports OAuth 2.0 (3LO) for Atlassian (Jira/Confluence):
 The backend uses a strict env-driven canonical redirect URI to ensure exact matching with Atlassian’s configuration.
 
 - Set in `integration_backend/.env`:
-  JIRA_REDIRECT_URI=https://vscode-internal-36721-beta.beta01.cloud.kavia.ai:3001/auth/jira/callback
+  JIRA_REDIRECT_URI=https://vscode-internal-29161-beta.beta01.cloud.kavia.ai:3001/auth/jira/callback
 
 - Register this exact value in your Atlassian Developer Console under Redirect URLs:
-  https://vscode-internal-36721-beta.beta01.cloud.kavia.ai:3001/auth/jira/callback
+  https://vscode-internal-29161-beta.beta01.cloud.kavia.ai:3001/auth/jira/callback
 
 - Notes:
   - The login endpoints do NOT accept or override redirect_uri. They always use the backend’s env-driven canonical value.
@@ -134,7 +134,7 @@ Set the following environment variables (see `integration_backend/.env.example`)
 - JIRA_REDIRECT_URI:
   IMPORTANT: Must exactly match what's registered in Atlassian.
   For this deployment it must be:
-  https://vscode-internal-36721-beta.beta01.cloud.kavia.ai:3001/auth/jira/callback
+  https://vscode-internal-29161-beta.beta01.cloud.kavia.ai:3001/auth/jira/callback
 
 Required Jira OAuth variables:
 - JIRA_OAUTH_CLIENT_ID
@@ -165,7 +165,7 @@ Some deployments forward requests through a reverse proxy with an `/api` prefix 
 Strict redirect_uri equality:
 - The redirect_uri used in /auth/*/login to build the authorize URL MUST be identical to the redirect_uri used in the token exchange callbacks, and MUST match exactly what is registered in Atlassian (including scheme, host, port, and path).
 - Current required canonical value:
-  https://vscode-internal-36721-beta.beta01.cloud.kavia.ai:3001/auth/jira/callback
+  https://vscode-internal-29161-beta.beta01.cloud.kavia.ai:3001/auth/jira/callback
 
 Environment mapping:
 - The backend also accepts some NEXT_PUBLIC_* variants commonly used in frontend environments for non-redirect settings:
