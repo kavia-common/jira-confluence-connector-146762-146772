@@ -758,11 +758,11 @@ async def jira_callback(request: Request, db=Depends(get_db), code: Optional[str
         _log_event(logging.INFO, "oauth_user_token_persisted", request, provider=provider, user_id=user.id)
 
         # Redirect back to frontend (UI return URL)
-        # Default route if FRONTEND not provided: https://vscode-internal-13311-beta.beta01.cloud.kavia.ai:3000/oauth/jira
+        # Default route if FRONTEND not provided: https://vscode-internal-14727-beta.beta01.cloud.kavia.ai:3000/oauth/jira
         frontend_base = get_frontend_base_url_default()
         if not frontend_base:
             # Use the required default from task
-            frontend_base = "https://vscode-internal-13311-beta.beta01.cloud.kavia.ai:3000"
+            frontend_base = "https://vscode-internal-14727-beta.beta01.cloud.kavia.ai:3000"
         # Preferred callback route for the UI
         return_path = "/oauth/jira"
         # Preserve state and minimal info; do not leak tokens
