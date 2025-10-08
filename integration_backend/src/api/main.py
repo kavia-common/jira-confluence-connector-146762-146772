@@ -406,7 +406,17 @@ def health_authorize_url_probe():
     """
     cfg = get_jira_oauth_config()
     client_id = (cfg.get("client_id") or "").strip()
-    redirect_uri = (cfg.get("redirect_uri") or "").strip()
+    # Use same guard/builder as login route
+    try:
+        atl_override = os.getenv("ATLASSIAN_OAUTH_REDIRECT_URI", "").strip()
+        if atl_override:
+            redirect_uri = atl_override
+        else:
+            from src.api.oauth_config import _choose_canonical_redirect  # type: ignore
+            redirect_uri = _choose_canonical_redirect("/auth/jira/callback")
+    except Exception:
+        redirect_uri = (cfg.get("redirect_uri") or "").strip()
+
     if not client_id or not redirect_uri:
         return _ocean_response(
             {
@@ -419,8 +429,8 @@ def health_authorize_url_probe():
         )
     default_scopes = "read:jira-work read:jira-user offline_access"
     url = build_atlassian_authorize_url(client_id=client_id, redirect_uri=redirect_uri, scopes=default_scopes, state=None)
-    # Also attach the raw redirect_uri for assertive verification
-    return _ocean_response({"url": url, "redirect_uri": redirect_uri}, "authorize url")
+    encoded_ri = urllib.parse.quote(redirect_uri, safe="")
+    return _ocean_response({"url": url, "redirect_uri": redirect_uri, "redirect_uri_encoded": encoded_ri}, "authorize url")
 
 
 # Users (Public)
@@ -473,6 +483,20 @@ def jira_login(
         redirect_uri = (cfg.get("redirect_uri") or "").strip()
         app_env = (cfg.get("app_env") or "production").lower()
         dev_mode = str(cfg.get("dev_mode") or "").lower() in ("true", "1", "yes")
+
+        # Hard guard: if ATLASSIAN_OAUTH_REDIRECT_URI is set, override to ensure exact match
+        # Otherwise reconstruct from backend public base to avoid any frontend-derived values.
+        try:
+            atl_override = os.getenv("ATLASSIAN_OAUTH_REDIRECT_URI", "").strip()
+            if atl_override:
+                redirect_uri = atl_override
+            else:
+                # Import builder lazily to avoid circulars
+                from src.api.oauth_config import _choose_canonical_redirect  # type: ignore
+                redirect_uri = _choose_canonical_redirect("/auth/jira/callback")
+        except Exception:
+            # If anything goes wrong, keep existing redirect_uri from cfg
+            pass
 
         # Presence flags and derived missing map (True means the field is missing)
         presence = {
