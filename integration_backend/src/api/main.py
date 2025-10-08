@@ -294,6 +294,7 @@ openapi_tags = [
     {"name": "Confluence Pages", "description": "Manage synced Confluence pages."},
     {"name": "Integrations", "description": "Connect and fetch from JIRA/Confluence (placeholders)."},
     {"name": "Auth", "description": "OAuth 2.0 authorization flows for Atlassian (Jira/Confluence)."},
+    {"name": "Connectors", "description": "Standardized connector endpoints per provider, mounted at /connectors/{id}."},
 ]
 
 app = FastAPI(
@@ -323,6 +324,11 @@ app.add_middleware(
 
 # Initialize database tables (for demo; in production, prefer migrations)
 Base.metadata.create_all(bind=engine)
+
+# Mount standardized connectors router (Jira/Confluence)
+from src.api.routers.connectors import connectors_router  # noqa: E402
+
+app.include_router(connectors_router)
 
 
 def _ocean_response(data: Any, message: str = "ok") -> Dict[str, Any]:

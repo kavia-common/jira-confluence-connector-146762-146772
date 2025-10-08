@@ -22,6 +22,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .config import Base
+from sqlalchemy import Boolean
 
 
 class TimestampMixin:
@@ -111,3 +112,27 @@ class ConfluencePage(Base, TimestampMixin):
 
     def __repr__(self) -> str:
         return f"ConfluencePage(id={self.id}, space={self.space_key}, title={self.title})"
+
+
+# PUBLIC_INTERFACE
+class ConnectorToken(Base, TimestampMixin):
+    """Encrypted per-tenant token storage for connectors (multi-tenant)."""
+
+    __tablename__ = "connector_tokens"
+    __table_args__ = (
+        UniqueConstraint("connector_id", "tenant_id", name="uq_connector_tenant"),
+        Index("ix_connector_tokens_lookup", "connector_id", "tenant_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    connector_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)  # e.g., "jira"
+    tenant_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)  # tenant key/id
+    token_payload: Mapped[str] = mapped_column(Text, nullable=False)  # base64 ciphertext or base64 plaintext JSON
+    encrypted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    scopes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # space-separated
+    expires_at: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # epoch seconds
+    metadata: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # reserved
+    last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    def __repr__(self) -> str:
+        return f"ConnectorToken(connector={self.connector_id}, tenant={self.tenant_id}, encrypted={self.encrypted})"

@@ -65,6 +65,57 @@ Now supports OAuth 2.0 (3LO) for Atlassian (Jira/Confluence):
   - GET /auth/confluence/login
   - GET /auth/confluence/callback
 
+### New standardized connector architecture (Jira/Confluence)
+
+Connectors are mounted under `/connectors/{connectorId}` with normalized interfaces and DTOs.
+
+- Base interface: `src/connectors/base/interface.py` with required methods:
+  - search(query, tenant_id, limit, filters)
+  - create(payload, tenant_id)
+  - get_resource(key, tenant_id)
+  - connection_status(tenant_id)
+  - oauth_authorize_url(tenant_id, state?, scopes?)
+  - oauth_callback(code, state?, tenant_id)
+  - refresh_token_if_needed(tenant_id)
+
+- Normalized DTOs (Pydantic): `src/connectors/base/models.py`
+  - SearchResultItem { id, title, url, type, icon?, snippet?, metadata }
+  - CreateResult { id, url?, title?, metadata }
+  - ConnectionStatus { connected, scopes?, expires_at?, error? }
+
+- Per-connector routers:
+  - Jira: `/connectors/jira/*`
+    - GET `/status`
+    - GET `/search?q=&limit=&filters=&tenant_id=`
+    - POST `/create?tenant_id=`
+    - GET `/oauth/login?tenant_id=&state=&scopes=&redirect=`
+    - GET `/oauth/callback?code=&state=&tenant_id=`
+    - GET `/resource/{key}`
+  - Confluence: `/connectors/confluence/*` (same shape)
+
+- Token storage & encryption:
+  - Model: `ConnectorToken` (table `connector_tokens`) with unique (connector_id, tenant_id)
+  - API: `src/db/token_store.py` with `save_tokens`, `get_tokens`, `get_token_record`, `delete_tokens`
+  - Encryption helper: `src/connectors/base/security.py` uses AES-GCM if `ENCRYPTION_KEY` is set; otherwise stores plaintext (dev only).
+
+- Multi-tenant:
+  - Tenant ID resolved from `X-Tenant-Id` header or `?tenant_id=` query param (defaults to `"default"` if omitted).
+
+- Backward compatibility:
+  - Existing `/auth/*` flows remain intact. New connectors’ OAuth endpoints are self-contained and use the same env-based config.
+
+- OpenAPI:
+  - Updated `integration_backend/interfaces/openapi.json` with new endpoints and DTO schemas.
+
+Environment:
+- Add `ENCRYPTION_KEY` to `integration_backend/.env` to enable at-rest token encryption (AES-GCM). If omitted, plaintext is used (dev only).
+
+How to add a new connector:
+1. Implement `BaseConnector` in `src/connectors/<name>/impl.py`.
+2. Create `router.py` in the same folder with endpoints mirroring the pattern above.
+3. Register it in `src/api/routers/connectors.py` via `connectors_router.include_router(...)`.
+4. Define any provider-specific scopes/flows in the implementation and normalize responses using the base DTOs.
+
 ### OAuth 2.0 Configuration (Atlassian)
 Set the following environment variables (see `integration_backend/.env.example`):
 - ATLASSIAN_CLOUD_BASE_URL: e.g., https://your-team.atlassian.net
