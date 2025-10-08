@@ -2,16 +2,18 @@
 
 This service handles OAuth 2.0 (3LO) with Atlassian for Jira and Confluence, persistence, and connector endpoints.
 
-Canonical Atlassian OAuth Redirect URI (STRICT)
-- The backend now uses a single env-driven canonical redirect URI for Jira, controlled by:
+Canonical Atlassian OAuth Redirect URI (STRICT) and Ports
+- Ports convention:
+  - Backend (FastAPI): 3001
+  - Frontend (Next.js): 3000
+- The backend uses a single env-driven canonical redirect URI for Jira, controlled by:
   - JIRA_REDIRECT_URI (required; if not set, a deployment default is used)
 - The exact value must be registered in the Atlassian Developer Console under Redirect URLs.
 - Default used when env is missing (for this deployment):
   https://vscode-internal-36721-beta.beta01.cloud.kavia.ai:3001/auth/jira/callback
+- Required deployment redirect URI per task:
+  ATLASSIAN_REDIRECT_URI=https://vscode-internal-29161-beta.beta01.cloud.kavia.ai:3001/api/oauth/callback/jira
 - No legacy/front-end/alias fallbacks are used anymore.
-
-Note: The acceptance criteria requires the Jira OAuth flow to use:
-https://vscode-internal-36721-beta.beta01.cloud.kavia.ai:3001/auth/jira/callback
 
 Environment variables (see .env.example)
 - JIRA_REDIRECT_URI=

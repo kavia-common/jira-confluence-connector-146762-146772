@@ -15,7 +15,8 @@ if os.path.exists(TEST_DB_PATH):
 os.environ["INTEGRATION_DB_URL"] = f"sqlite:///{TEST_DB_PATH}"
 os.environ["ATLASSIAN_CLOUD_BASE_URL"] = "https://example.atlassian.net"
 os.environ["APP_FRONTEND_URL"] = "http://localhost:3000"
-# Jira OAuth env
+os.environ["BACKEND_CORS_ORIGINS"] = "http://localhost:3000"
+# Jira OAuth env (backend port must be 3001)
 os.environ["JIRA_OAUTH_CLIENT_ID"] = "test_client_id"
 os.environ["JIRA_OAUTH_CLIENT_SECRET"] = "test_client_secret"
 os.environ["JIRA_OAUTH_REDIRECT_URI"] = "http://localhost:3001/auth/jira/callback"
