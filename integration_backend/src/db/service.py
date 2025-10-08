@@ -41,6 +41,13 @@ def get_user_by_id(db: Session, user_id: int) -> Optional[User]:
 
 
 # PUBLIC_INTERFACE
+def get_user_by_email(db: Session, email: str) -> Optional[User]:
+    """Get a user by email if present; otherwise return None."""
+    stmt = select(User).where(User.email == email)
+    return db.execute(stmt).scalar_one_or_none()
+
+
+# PUBLIC_INTERFACE
 def list_users(db: Session) -> List[User]:
     """List all users."""
     return list(db.execute(select(User).order_by(User.id.desc())).scalars())

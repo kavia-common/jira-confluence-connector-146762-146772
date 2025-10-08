@@ -61,7 +61,7 @@ Now supports OAuth 2.0 (3LO) for Atlassian (Jira/Confluence):
   - POST /confluence/pages, GET /confluence/pages/{owner_id}
 - OAuth:
   - GET /auth/jira/login -> JSON authorize URL by default; ?redirect=true issues HTTP 307 redirect (Cache-Control: no-store)
-  - GET /auth/jira/callback -> exchange code; persists tokens on first user (demo)
+  - GET /auth/jira/callback -> exchange code; persists tokens on a resolved user (state > first user > auto-created placeholder)
   - GET /auth/confluence/login
   - GET /auth/confluence/callback
 
@@ -123,7 +123,10 @@ Environment fallback mapping:
 - Confluence connect is analogous ("/auth/confluence/login").
 - After Atlassian redirects back to our backend callbacks, the backend will:
   - Exchange authorization code for tokens
-  - Store access_token, refresh_token, and expiration on the first user (demo simplification)
+  - Store access_token, refresh_token, and expiration on a resolved user:
+    - If state carries user_id or email, we associate to that user (creating by email if necessary)
+    - Else if any user exists, we use the first one
+    - Else we auto-create a placeholder user (email oauth-user-<uuid>@example.local)
   - Redirect to APP_FRONTEND_URL + "/oauth/jira?status=success&user_id=<id>&state=<optional>" for Jira
     (Default APP_FRONTEND_URL if not set: https://vscode-internal-13311-beta.beta01.cloud.kavia.ai:3000)
 - Your frontend should implement a route (/oauth/jira) to read these query params and update UI state — e.g., mark the provider as "Connected".
@@ -174,3 +177,34 @@ curl -H "X-Request-ID: my-debug-123" "http://localhost:3001/api/auth/jira/callba
 ```
 
 Use the `X-Request-ID` value returned by the backend in error responses (500) to quickly locate the associated logs when filing support tickets or debugging issues.
+
+### Manual verification checklist (OAuth callbacks)
+
+1. Configure env in integration_backend/.env (or container env):
+   - JIRA_OAUTH_CLIENT_ID, JIRA_OAUTH_CLIENT_SECRET, JIRA_OAUTH_REDIRECT_URI
+   - APP_FRONTEND_URL (e.g., http://localhost:3000)
+   - ATLASSIAN_CLOUD_BASE_URL (e.g., https://your-team.atlassian.net)
+
+2. Start backend:
+   uvicorn src.api.main:app --reload --port 3001 --app-dir integration_backend
+
+3. Visit GET /auth/jira/login to get authorize URL and complete consent.
+   Atlassian redirects to /auth/jira/callback?code=...&state=...
+
+4. Callback behavior:
+   - If no users exist, backend auto-creates a placeholder user and stores tokens.
+   - If a user exists, backend uses the first user by default.
+   - If the state contains user_id=<id> or email=<addr>, backend resolves and associates to that user.
+
+5. Observe redirect to the frontend:
+   - For Jira: APP_FRONTEND_URL + /oauth/jira?status=success&user_id=<id>&state=<state>
+   - For Confluence: APP_FRONTEND_URL + /oauth/callback?provider=confluence&status=success&user_id=<id>&state=<state>
+
+6. Confirm in backend data:
+   - GET /users -> returns list with the created/updated user
+   - Tokens are stored on the server (not exposed by API responses)
+
+Troubleshooting tips:
+- Ensure the redirect_uri configured on Atlassian matches EXACTLY what backend uses.
+- Use `LOG_LEVEL=DEBUG` and trace logs via X-Request-ID.
+- In development (`DEV_MODE=true`), /auth/jira/login returns a mock URL if misconfigured to keep flows testable.

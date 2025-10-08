@@ -19,6 +19,7 @@ from src.db.service import (
     create_user,
     list_users,
     get_user_by_id,
+    get_user_by_email,
     upsert_jira_project,
     list_jira_projects_for_user,
     upsert_confluence_page,
@@ -574,11 +575,89 @@ def jira_login(
     summary="Jira OAuth 2.0 callback",
     description="Handles Atlassian redirect, exchanges code for tokens, stores them on the first user (or targeted later), and redirects back to frontend.",
 )
+def _parse_state_map(raw_state: Optional[str]) -> Dict[str, Any]:
+    """Best-effort parse of the OAuth 'state' to extract user hints."""
+    if not raw_state:
+        return {}
+    # Already URL-decoded by FastAPI/Starlette
+    s = raw_state.strip()
+    # Try JSON first
+    try:
+        j = json.loads(s)
+        if isinstance(j, dict):
+            return j
+    except Exception:
+        pass
+    # Try querystring format: user_id=...&email=...
+    try:
+        qs = urllib.parse.parse_qs(s, keep_blank_values=False)
+        flat = {k: (v[0] if isinstance(v, list) and v else v) for k, v in qs.items()}
+        if any(k in flat for k in ("user_id", "uid", "email")):
+            return flat
+    except Exception:
+        pass
+    # Try simple prefixes like "uid:<id>" or "email:<addr>"
+    try:
+        if s.lower().startswith("uid:") or s.lower().startswith("user_id:"):
+            return {"user_id": s.split(":", 1)[1]}
+        if s.lower().startswith("email:"):
+            return {"email": s.split(":", 1)[1]}
+    except Exception:
+        pass
+    return {}
+
+
+def _resolve_user_from_state(db, state: Optional[str]):
+    """Attempt to resolve an existing or target user from the provided state."""
+    hints = _parse_state_map(state)
+    # user_id hint
+    uid = hints.get("user_id") or hints.get("uid")
+    if uid:
+        try:
+            uid_int = int(str(uid).strip())
+            user = get_user_by_id(db, uid_int)
+            if user:
+                return user, {"method": "state_user_id", "user_id": uid_int}
+        except Exception:
+            pass
+    # email hint
+    email = hints.get("email")
+    if email and isinstance(email, str) and "@" in email:
+        email_norm = email.strip()
+        # Find existing or create idempotently as a target
+        existing = get_user_by_email(db, email_norm)
+        if existing:
+            return existing, {"method": "state_email_existing", "email": email_norm}
+        user = create_user(db, email=email_norm, display_name=hints.get("display_name") or None)
+        return user, {"method": "state_email_created", "email": email_norm}
+    return None, {"method": "no_state_match"}
+
+
+def _ensure_target_user(db, request: Request, state: Optional[str]):
+    """Return a user to associate tokens with; create placeholder if none exists."""
+    # 1) Try to resolve from state
+    user, meta = _resolve_user_from_state(db, state)
+    if user:
+        _log_event(logging.INFO, "oauth_state_user_resolved", request, provider=None, resolved=meta)
+        return user, meta
+
+    # 2) Use first existing user if present
+    users = list_users(db)
+    if users:
+        return users[0], {"method": "first_user"}
+
+    # 3) Create placeholder user
+    placeholder_email = f"oauth-user-{uuid.uuid4().hex}@example.local"
+    user = create_user(db, email=placeholder_email, display_name="First Login")
+    _log_event(logging.INFO, "oauth_placeholder_user_created", request, user_id=user.id, email=placeholder_email)
+    return user, {"method": "placeholder_created", "email": placeholder_email}
+
+
 async def jira_callback(request: Request, db=Depends(get_db), code: Optional[str] = None, state: Optional[str] = None):
     """
     Complete Jira OAuth 2.0 flow:
     - Exchange authorization code for access and refresh tokens
-    - Store tokens and expiry on a user (demo: first user)
+    - Store tokens and expiry on an associated user (resolved from state, first user, or placeholder)
     - Redirect to frontend with status
     """
     provider = "jira"
@@ -663,12 +742,8 @@ async def jira_callback(request: Request, db=Depends(get_db), code: Optional[str
             _log_event(logging.ERROR, "oauth_no_access_token", request, provider=provider, status_code=502)
             raise HTTPException(status_code=502, detail="No access token returned by Atlassian")
 
-        # For demo simplicity: store on the first user (or require selecting target later)
-        users = list_users(db)
-        if not users:
-            _log_event(logging.ERROR, "oauth_no_user_available", request, provider=provider, status_code=400)
-            raise HTTPException(status_code=400, detail="No user found. Create a user first via POST /users.")
-        user = users[0]
+        # Resolve or create a user to associate with this connection
+        user, user_meta = _ensure_target_user(db, request, state)
 
         user.jira_token = access_token
         user.jira_refresh_token = refresh_token
@@ -960,11 +1035,8 @@ async def confluence_callback(request: Request, db=Depends(get_db), code: Option
             _log_event(logging.ERROR, "oauth_no_access_token", request, provider=provider, status_code=502)
             raise HTTPException(status_code=502, detail="No access token returned by Atlassian")
 
-        users = list_users(db)
-        if not users:
-            _log_event(logging.ERROR, "oauth_no_user_available", request, provider=provider, status_code=400)
-            raise HTTPException(status_code=400, detail="No user found. Create a user first via POST /users.")
-        user = users[0]
+        # Resolve or create a user to associate with this connection
+        user, user_meta = _ensure_target_user(db, request, state)
 
         user.confluence_token = access_token
         user.confluence_refresh_token = refresh_token
