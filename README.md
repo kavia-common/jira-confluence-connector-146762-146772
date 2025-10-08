@@ -70,6 +70,8 @@ Set the following environment variables (see `.env.example`):
 - ATLASSIAN_CLOUD_BASE_URL: e.g., https://your-team.atlassian.net
 - JIRA_OAUTH_CLIENT_ID, JIRA_OAUTH_CLIENT_SECRET
 - JIRA_OAUTH_REDIRECT_URI: e.g., https://yourapp.com/api/auth/jira/callback
+  IMPORTANT: Must exactly match what's registered in Atlassian. For this deployment it must be:
+  https://vscode-internal-13311-beta.beta01.cloud.kavia.ai:3001/auth/jira/callback
 - Optional for Confluence if using separate app:
   - CONFLUENCE_OAUTH_CLIENT_ID, CONFLUENCE_OAUTH_CLIENT_SECRET
   - CONFLUENCE_OAUTH_REDIRECT_URI
@@ -90,6 +92,11 @@ Some deployments forward requests through a reverse proxy with an `/api` prefix 
 - GET /api/oauth/atlassian/callback -> generic alias that delegates to Jira callback (use Jira/Confluence-specific callbacks when possible)
 
 Recommended Redirect URIs to configure in Atlassian:
+
+Strict redirect_uri equality:
+- The redirect_uri used in /auth/jira/login to build the authorize URL MUST be identical to the redirect_uri used in the token exchange (/auth/jira/callback), and MUST match exactly what is registered in Atlassian (including scheme, host, port, and path).
+- Current required value: https://vscode-internal-13311-beta.beta01.cloud.kavia.ai:3001/auth/jira/callback
+
 - Jira: https://<backend-domain>/api/auth/jira/callback (if your proxy keeps `/api`), otherwise https://<backend-domain>/auth/jira/callback
 - Confluence: https://<backend-domain>/api/auth/confluence/callback (or without `/api` if your proxy strips it)
 
@@ -109,8 +116,9 @@ Environment fallback mapping:
 - After Atlassian redirects back to our backend callbacks, the backend will:
   - Exchange authorization code for tokens
   - Store access_token, refresh_token, and expiration on the first user (demo simplification)
-  - Redirect to APP_FRONTEND_URL + "/oauth/callback?provider=<jira|confluence>&status=success&user_id=<id>&state=<optional>"
-- Your frontend should implement a route (/oauth/callback) to read these query params and update UI state — e.g., mark the provider as "Connected".
+  - Redirect to APP_FRONTEND_URL + "/oauth/jira?status=success&user_id=<id>&state=<optional>" for Jira
+    (Default APP_FRONTEND_URL if not set: https://vscode-internal-13311-beta.beta01.cloud.kavia.ai:3000)
+- Your frontend should implement a route (/oauth/jira) to read these query params and update UI state — e.g., mark the provider as "Connected".
 - For CSRF mitigation, you can generate a state string on the frontend and pass it to /auth/*/login via ?state=..., and validate on your own after redirection.
 
 ### Important notes

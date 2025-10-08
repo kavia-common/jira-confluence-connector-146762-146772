@@ -45,12 +45,13 @@ class Settings(BaseModel):
     log_level: str = Field(default=os.getenv("LOG_LEVEL", "INFO"))
     # CORS
     backend_cors_origins: str = Field(default=os.getenv("BACKEND_CORS_ORIGINS", os.getenv("NEXT_PUBLIC_BACKEND_CORS_ORIGINS", "*")))
+    # Frontend base URL (used for post-auth redirect). Default stays as-is; route suffix handled in main logic.
     frontend_url: Optional[str] = Field(default=_env_first("APP_FRONTEND_URL", "NEXT_PUBLIC_APP_FRONTEND_URL", "NEXT_PUBLIC_FRONTEND_BASE_URL"))
 
     # Atlassian base
     atlassian_base_url: Optional[str] = Field(default=_env_first("ATLASSIAN_CLOUD_BASE_URL", "NEXT_PUBLIC_ATLASSIAN_CLOUD_BASE_URL"))
 
-    # Jira OAuth
+    # Jira OAuth (STRICT: redirect_uri must exactly match Atlassian console)
     jira_client_id: Optional[str] = Field(default=_env_first("JIRA_OAUTH_CLIENT_ID", "ATLASSIAN_CLIENT_ID", "NEXT_PUBLIC_JIRA_OAUTH_CLIENT_ID", "NEXT_PUBLIC_JIRA_CLIENT_ID", "NEXT_PUBLIC_ATLASSIAN_CLIENT_ID"))
     jira_client_secret: Optional[str] = Field(default=_env_first("JIRA_OAUTH_CLIENT_SECRET", "ATLASSIAN_CLIENT_SECRET", "NEXT_PUBLIC_JIRA_OAUTH_CLIENT_SECRET", "NEXT_PUBLIC_ATLASSIAN_CLIENT_SECRET"))
     jira_redirect_uri: Optional[str] = Field(default=_env_first("JIRA_OAUTH_REDIRECT_URI", "ATLASSIAN_REDIRECT_URI", "NEXT_PUBLIC_JIRA_OAUTH_REDIRECT_URI", "NEXT_PUBLIC_ATLASSIAN_REDIRECT_URI"))

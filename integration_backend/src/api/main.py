@@ -364,7 +364,7 @@ def jira_login(request: Request, state: Optional[str] = None, scope: Optional[st
         app_env = (cfg.get("app_env") or "production").lower()
         dev_mode = str(cfg.get("dev_mode") or "").lower() in ("true", "1", "yes")
 
-        # If not configured, return mock in dev, else 400
+        # Strict requirement: redirect_uri must be provided and EXACTLY match what's registered in Atlassian
         if not client_id or not redirect_uri:
             if dev_mode or app_env == "development":
                 mock_url = "https://auth.atlassian.com/authorize?mock=true"
@@ -384,12 +384,12 @@ def jira_login(request: Request, state: Optional[str] = None, scope: Optional[st
                 status_code=400,
                 content={
                     "status": "error",
-                    "message": "Jira OAuth is not configured. Set JIRA_OAUTH_CLIENT_ID and JIRA_OAUTH_REDIRECT_URI.",
+                    "message": "Jira OAuth is not fully configured. Ensure JIRA_OAUTH_CLIENT_ID and JIRA_OAUTH_REDIRECT_URI are set and match Atlassian exactly.",
                     "missing": {"client_id": bool(client_id), "redirect_uri": bool(redirect_uri)},
                 },
             )
 
-        # Default scopes recommended
+        # Default scopes (can be overridden via query param)
         default_scopes = [
             "read:jira-work",
             "read:jira-user",
@@ -397,6 +397,7 @@ def jira_login(request: Request, state: Optional[str] = None, scope: Optional[st
         ]
         scopes = scope or " ".join(default_scopes)
 
+        # Build authorize URL using EXACT redirect_uri from env
         url = build_atlassian_authorize_url(client_id=client_id, redirect_uri=redirect_uri, scopes=scopes, state=state)
         _log_event(
             logging.INFO,
@@ -406,6 +407,7 @@ def jira_login(request: Request, state: Optional[str] = None, scope: Optional[st
             authorize_endpoint="https://auth.atlassian.com/authorize",
             has_state=bool(state),
             scope_count=(len(scopes.split()) if scopes else 0),
+            configured_redirect_uri_present=bool(redirect_uri),
         )
         # Return 200 with the URL for clients to navigate
         return JSONResponse(status_code=200, content={"url": url})
@@ -542,16 +544,21 @@ async def jira_callback(request: Request, db=Depends(get_db), code: Optional[str
 
         _log_event(logging.INFO, "oauth_user_token_persisted", request, provider=provider, user_id=user.id)
 
-        # Redirect back to frontend
-        frontend = get_frontend_base_url_default() or "/"
-        # Include minimal status info; avoid exposing tokens
+        # Redirect back to frontend (UI return URL)
+        # Default route if FRONTEND not provided: https://vscode-internal-13311-beta.beta01.cloud.kavia.ai:3000/oauth/jira
+        frontend_base = get_frontend_base_url_default()
+        if not frontend_base:
+            # Use the required default from task
+            frontend_base = "https://vscode-internal-13311-beta.beta01.cloud.kavia.ai:3000"
+        # Preferred callback route for the UI
+        return_path = "/oauth/jira"
+        # Preserve state and minimal info; do not leak tokens
         params = {
-            "provider": provider,
             "status": "success",
             "state": state or "",
             "user_id": str(user.id),
         }
-        redirect_to = f"{frontend.rstrip('/')}/oauth/callback?{urllib.parse.urlencode(params)}"
+        redirect_to = f"{frontend_base.rstrip('/')}{return_path}?{urllib.parse.urlencode(params)}"
         _log_event(logging.INFO, "frontend_redirect", request, provider=provider, redirect=redirect_to)
         return RedirectResponse(redirect_to)
     except HTTPException:
