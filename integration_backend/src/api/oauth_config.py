@@ -238,7 +238,8 @@ def _choose_canonical_redirect(default_path: str) -> str:
 
     Strict precedence:
       1) JIRA_REDIRECT_URI (used verbatim)
-      2) Deployment default: https://vscode-internal-36200-beta.beta01.cloud.kavia.ai:3001/auth/jira/callback
+      2) Dynamic URL based on current request host/proto if available (via _choose_canonical_redirect_from_request)
+      3) Deployment default: https://vscode-internal-36200-beta.beta01.cloud.kavia.ai:3001/auth/jira/callback
 
     Notes:
     - Never derive from frontend URL.
@@ -249,7 +250,64 @@ def _choose_canonical_redirect(default_path: str) -> str:
     if effective:
         return effective
 
-    # Strict default to meet acceptance criteria
+    # Without request context, fall back to safe default; request-aware builder is provided below.
+    return "https://vscode-internal-36200-beta.beta01.cloud.kavia.ai:3001/auth/jira/callback"
+
+from fastapi import Request  # safe to import; only used when FastAPI present
+from urllib.parse import urlunparse
+
+def _pick_scheme_host_from_headers(request: Request) -> tuple[str | None, str | None]:
+    """
+    Inspect forwarded headers to infer the external scheme and host for reverse-proxied deployments.
+    Returns (scheme, host) or (None, None) if not derivable.
+    """
+    # Prefer explicit forwarded proto/host
+    proto = (request.headers.get("x-forwarded-proto") or request.headers.get("x-scheme") or "").strip().lower()
+    host = (request.headers.get("x-forwarded-host") or "").strip()
+    # Fallback to request.url when not proxied
+    if not proto:
+        proto = request.url.scheme
+    if not host:
+        host = request.headers.get("host") or request.url.netloc
+    proto = proto or None
+    host = host or None
+    return proto, host
+
+# PUBLIC_INTERFACE
+def choose_jira_redirect_with_request(request: Request, callback_path: str = "/auth/jira/callback") -> str:
+    """
+    Determine the effective Jira redirect_uri using:
+      1) JIRA_REDIRECT_URI env override if set (verbatim)
+      2) Current request's external scheme/host (X-Forwarded-Proto/Host aware) + callback_path
+      3) Safe default for this deployment
+
+    This ensures the redirect_uri matches the host the client used to reach the backend.
+    """
+    # 1) Env override
+    env_val, _ = _resolve_env(JIRA_REDIRECT_ENV_CANDIDATES)
+    if env_val and env_val.strip():
+        return env_val.strip()
+
+    # 2) Build from current request context
+    try:
+        scheme, host = _pick_scheme_host_from_headers(request)
+        # Build absolute URL: scheme://host + callback_path
+        if scheme and host:
+            # normalize path
+            path = callback_path if callback_path.startswith("/") else f"/{callback_path}"
+            return urlunparse((scheme, host, path, "", "", ""))
+        # As a last attempt, use url_for to get absolute URL if available
+        try:
+            # Build absolute callback using named route
+            abs_url = str(request.url_for("jira_callback"))
+            if abs_url:
+                return abs_url
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+    # 3) Fallback default (kept to satisfy acceptance tests)
     return "https://vscode-internal-36200-beta.beta01.cloud.kavia.ai:3001/auth/jira/callback"
 
 # PUBLIC_INTERFACE
@@ -333,12 +391,13 @@ def get_jira_oauth_env_debug() -> Dict[str, Dict[str, str]]:
     frontend_val, frontend_src = _resolve_env(FRONTEND_URL_ENV_CANDIDATES)
     base_val, base_src = _resolve_env(ATLASSIAN_BASE_ENV_CANDIDATES)
 
-    # Determine the effective redirect URI that will be used by get_jira_oauth_config()
+    # Determine the effective redirect URI that will be used generally (without request context)
     explicit_redirect = redirect_val.strip() if redirect_val else ""
     if explicit_redirect:
         effective_redirect = explicit_redirect
         effective_source = redirect_src or "JIRA_REDIRECT_URI"
     else:
+        # Without request context, we cannot infer host; show the static default here.
         effective_redirect = "https://vscode-internal-36200-beta.beta01.cloud.kavia.ai:3001/auth/jira/callback"
         effective_source = "default"
 

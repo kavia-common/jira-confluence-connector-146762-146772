@@ -399,7 +399,7 @@ def health_redirect_uri():
     summary="Verification: Jira authorize URL (no redirect, no state)",
     description="Returns the Atlassian authorize URL that would be used by /auth/jira/login with default scopes and no state. Use this to verify the exact redirect_uri parameter.",
 )
-def health_authorize_url_probe():
+def health_authorize_url_probe(request: Request):
     """
     Build and return the Atlassian authorize URL using the current Jira OAuth config without redirecting.
     This is intended for verification of the redirect_uri parameter.
@@ -408,13 +408,13 @@ def health_authorize_url_probe():
     client_id = (cfg.get("client_id") or "").strip()
     # Use same guard/builder as login route
     try:
-        # Strictly use JIRA_REDIRECT_URI or the strict default via builder
+        # Strictly use JIRA_REDIRECT_URI or derive from current request host
         jira_override = os.getenv("JIRA_REDIRECT_URI", "").strip()
         if jira_override:
             redirect_uri = jira_override
         else:
-            from src.api.oauth_config import _choose_canonical_redirect  # type: ignore
-            redirect_uri = _choose_canonical_redirect("/auth/jira/callback")
+            from src.api.oauth_config import choose_jira_redirect_with_request  # type: ignore
+            redirect_uri = choose_jira_redirect_with_request(request, "/auth/jira/callback")
     except Exception:
         redirect_uri = (cfg.get("redirect_uri") or "").strip()
 
@@ -499,14 +499,14 @@ def jira_login(
                     redirect_uri=redirect_uri,
                 )
             else:
-                from src.api.oauth_config import _choose_canonical_redirect  # type: ignore
-                redirect_uri = _choose_canonical_redirect("/auth/jira/callback")
+                from src.api.oauth_config import choose_jira_redirect_with_request  # type: ignore
+                redirect_uri = choose_jira_redirect_with_request(request, "/auth/jira/callback")
                 _log_event(
                     logging.INFO,
                     "oauth_redirect_uri_source",
                     request,
                     provider=provider,
-                    source_env="default",
+                    source_env="request",
                     redirect_uri=redirect_uri,
                 )
         except Exception as e:
@@ -720,6 +720,7 @@ def jira_login(
         "Handles Atlassian redirect, exchanges code for tokens, stores them on the first user (or targeted later), and redirects back to frontend.\n"
         "Notes: Accepts standard 'state' from Atlassian."
     ),
+    name="jira_callback",
 )
 def _parse_state_map(state: Optional[str]) -> Dict[str, Any]:
     """Best-effort parse of the OAuth 'state' to extract user hints."""
