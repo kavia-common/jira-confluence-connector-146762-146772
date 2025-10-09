@@ -311,15 +311,23 @@ app = FastAPI(
 # Ensure RequestID is outermost so all logs include it
 app.add_middleware(RequestIDMiddleware)
 
-# CORS: prefer configured origins; fallback to "*"
+# CORS: Restrictive allowlist for the running frontend origin; handle preflight automatically.
+# If you need to change this at runtime, set NEXT_PUBLIC_BACKEND_CORS_ORIGINS or backend_cors_origins accordingly.
+# For this environment, we must explicitly allow the Next.js frontend origin on :3000.
+allowed_frontend_origin = "https://vscode-internal-36200-beta.beta01.cloud.kavia.ai:3000"
+
+# If settings specify more origins, merge while ensuring the required one is present.
 from src.api.oauth_config import _SETTINGS as _SETTINGS_INTERNAL  # safe import inside backend
-cors_origins_raw = _SETTINGS_INTERNAL.backend_cors_origins or "*"
-origins = [o.strip() for o in cors_origins_raw.split(",")] if cors_origins_raw else ["*"]
+configured = _SETTINGS_INTERNAL.backend_cors_origins or ""
+configured_list = [o.strip() for o in configured.split(",")] if configured else []
+if allowed_frontend_origin not in configured_list:
+    configured_list.append(allowed_frontend_origin)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins if origins != ["*"] else ["*"],
+    allow_origins=configured_list,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET"],  # Only GET needed for OAuth login fetch
     allow_headers=["*"],
 )
 
@@ -491,6 +499,18 @@ def health_redirect_pieces(request: Request):
 # -----------------------
 # OAuth 2.0 for Atlassian - Jira
 # -----------------------
+
+# PUBLIC_INTERFACE
+@app.options(
+    "/auth/jira/login",
+    tags=["Auth"],
+    summary="CORS preflight for Jira login",
+    description="Handles CORS preflight for Jira OAuth login endpoint."
+)
+def jira_login_options():
+    """Respond OK to CORS preflight for /auth/jira/login."""
+    # CORSMiddleware will inject the CORS headers. Returning empty 200 is sufficient.
+    return JSONResponse(status_code=200, content={})
 
 # PUBLIC_INTERFACE
 @app.get(
