@@ -433,6 +433,57 @@ def health_authorize_url_probe(request: Request):
     encoded_ri = urllib.parse.quote(redirect_uri, safe="")
     return _ocean_response({"url": url, "redirect_uri": redirect_uri, "redirect_uri_encoded": encoded_ri}, "authorize url")
 
+# PUBLIC_INTERFACE
+@app.get(
+    "/health/redirect-pieces",
+    tags=["Health"],
+    summary="Verification: Computed Jira redirect pieces",
+    description="Returns the scheme, host:port and path used to form the Jira redirect_uri, honoring X-Forwarded headers.",
+)
+def health_redirect_pieces(request: Request):
+    """
+    Compute the effective pieces used to build the Jira redirect_uri for this request.
+
+    Returns:
+        JSON including:
+        - scheme
+        - host_port (netloc)
+        - path (always '/auth/jira/callback')
+        - redirect_uri (full)
+        - redirect_uri_encoded (urlencoded)
+        - source: 'env' if JIRA_REDIRECT_URI is set, else 'request' or 'default'
+    """
+    try:
+        override = os.getenv("JIRA_REDIRECT_URI", "").strip()
+        if override:
+            redirect_uri = override
+            source = "env"
+        else:
+            from src.api.oauth_config import _pick_scheme_host_from_headers  # type: ignore
+            scheme, host_port = _pick_scheme_host_from_headers(request)
+            path = "/auth/jira/callback"
+            if scheme and host_port:
+                redirect_uri = f"{scheme}://{host_port}{path}"
+                source = "request"
+            else:
+                redirect_uri = "https://vscode-internal-36200-beta.beta01.cloud.kavia.ai:3001/auth/jira/callback"
+                source = "default"
+        encoded = urllib.parse.quote(redirect_uri, safe="")
+        parsed = urllib.parse.urlparse(redirect_uri)
+        return _ocean_response(
+            {
+                "scheme": parsed.scheme,
+                "host_port": parsed.netloc,
+                "path": parsed.path,
+                "redirect_uri": redirect_uri,
+                "redirect_uri_encoded": encoded,
+                "source": source,
+            },
+            "computed redirect pieces",
+        )
+    except Exception as e:
+        return _ocean_response({"error": str(e)}, "failed to compute pieces")
+
 
 # Users (Public)
 

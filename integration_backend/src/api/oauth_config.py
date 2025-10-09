@@ -259,56 +259,68 @@ from urllib.parse import urlunparse
 
 def _pick_scheme_host_from_headers(request: Request) -> tuple[str | None, str | None]:
     """
-    Inspect forwarded headers to infer the external scheme and host for reverse-proxied deployments.
-    Returns (scheme, host) or (None, None) if not derivable.
+    Inspect forwarded headers to infer the external scheme and host:port for reverse-proxied deployments.
+
+    Priority:
+      - X-Forwarded-Proto and X-Forwarded-Host if present
+      - Fallback to Host header and request.url.scheme/netloc
+
+    Always preserve explicit port if provided by headers or URL (e.g., :3001).
     """
-    # Prefer explicit forwarded proto/host
+    # Prefer explicit forwarded values
     proto = (request.headers.get("x-forwarded-proto") or request.headers.get("x-scheme") or "").strip().lower()
-    host = (request.headers.get("x-forwarded-host") or "").strip()
-    # Fallback to request.url when not proxied
-    if not proto:
-        proto = request.url.scheme
-    if not host:
-        host = request.headers.get("host") or request.url.netloc
-    proto = proto or None
-    host = host or None
-    return proto, host
+    fwd_host = (request.headers.get("x-forwarded-host") or "").strip()
+
+    # If no forwarded headers, use request data
+    scheme = proto if proto else (request.url.scheme or None)
+
+    # Determine host:port preserving port if present
+    host_port = None
+    if fwd_host:
+        # If multiple hosts are forwarded, pick the first (common format "host1, host2")
+        host_port = fwd_host.split(",")[0].strip()
+    if not host_port:
+        # Prefer Host header (may include port), else request.url.netloc
+        host_port = (request.headers.get("host") or request.url.netloc or "").strip()
+
+    host_port = host_port or None
+    scheme = scheme or None
+    return scheme, host_port
 
 # PUBLIC_INTERFACE
 def choose_jira_redirect_with_request(request: Request, callback_path: str = "/auth/jira/callback") -> str:
     """
     Determine the effective Jira redirect_uri using:
       1) JIRA_REDIRECT_URI env override if set (verbatim)
-      2) Current request's external scheme/host (X-Forwarded-Proto/Host aware) + callback_path
-      3) Safe default for this deployment
-
-    This ensures the redirect_uri matches the host the client used to reach the backend.
+      2) Current request's external scheme and host:port (X-Forwarded-Proto/Host aware) + callback_path
+      3) Safe default for this deployment (explicit :3001)
     """
     # 1) Env override
     env_val, _ = _resolve_env(JIRA_REDIRECT_ENV_CANDIDATES)
     if env_val and env_val.strip():
         return env_val.strip()
 
-    # 2) Build from current request context
+    # 2) From current request context with port preservation
+    scheme, host_port = _pick_scheme_host_from_headers(request)
+    if scheme and host_port:
+        path = callback_path if callback_path.startswith("/") else f"/{callback_path}"
+        return urlunparse((scheme, host_port, path, "", "", ""))
+
+    # As a last attempt, try url_for which may already include correct host:port under some setups
     try:
-        scheme, host = _pick_scheme_host_from_headers(request)
-        # Build absolute URL: scheme://host + callback_path
-        if scheme and host:
-            # normalize path
+        abs_url = str(request.url_for("jira_callback"))
+        if abs_url:
+            # Ensure path is '/auth/jira/callback' and preserve netloc (including port) from abs_url
+            parsed = urllib.parse.urlparse(abs_url)
+            netloc = parsed.netloc
+            eff_scheme = parsed.scheme or scheme or "https"
             path = callback_path if callback_path.startswith("/") else f"/{callback_path}"
-            return urlunparse((scheme, host, path, "", "", ""))
-        # As a last attempt, use url_for to get absolute URL if available
-        try:
-            # Build absolute callback using named route
-            abs_url = str(request.url_for("jira_callback"))
-            if abs_url:
-                return abs_url
-        except Exception:
-            pass
+            if netloc:
+                return urlunparse((eff_scheme, netloc, path, "", "", ""))
     except Exception:
         pass
 
-    # 3) Fallback default (kept to satisfy acceptance tests)
+    # 3) Fallback default with explicit :3001
     return "https://vscode-internal-36200-beta.beta01.cloud.kavia.ai:3001/auth/jira/callback"
 
 # PUBLIC_INTERFACE
