@@ -84,6 +84,10 @@ class ConfluencePageRead(BaseModel):
         from_attributes = True
 
 
+# PUBLIC_INTERFACE
+class OAuthAuthorizeURL(BaseModel):
+    """Response model containing an OAuth authorize URL."""
+    url: str = Field(..., description="Full Atlassian OAuth authorize URL to navigate to.")
 # ---- Integration helper response schemas (auth removed) ----
 # Note for frontend:
 # - To start OAuth, open GET /auth/jira/login (or /auth/confluence/login).

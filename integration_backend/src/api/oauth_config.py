@@ -10,10 +10,8 @@ Required environment variables (example .env is provided separately):
 - JIRA_REDIRECT_URI: Canonical Redirect URI configured in Atlassian developer console, e.g. "https://yourapp.com/auth/jira/callback"
   This value is used for Jira authorization URL construction and must match exactly in Atlassian.
 
-Redirect URI precedence (strict):
-1) JIRA_REDIRECT_URI if set (used verbatim)
-2) Request-aware builder using X-Forwarded-Proto/Host + Request.url_for('jira_callback')
-3) Deployment default: https://vscode-internal-36200-beta.beta01.cloud.kavia.ai:3001/auth/jira/callback
+Redirect URI policy (strict):
+- Always use JIRA_REDIRECT_URI verbatim. If it's not set, Jira OAuth is considered not configured and the login endpoint will return a clear 400 error payload describing which variables are missing.
 
 Notes:
 - No legacy/front-end/alias fallbacks are used.

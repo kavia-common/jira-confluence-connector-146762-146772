@@ -353,10 +353,13 @@ if allowed_frontend_origin not in configured_list:
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=configured_list,
+    allow_origins=configured_list if configured_list else ["*"],
     allow_credentials=True,
-    allow_methods=["GET"],  # Only GET needed for OAuth login fetch
+    # Allow GET for normal fetch and OPTIONS for CORS preflight; include POST for future extensibility
+    allow_methods=["GET", "OPTIONS", "POST"],
     allow_headers=["*"],
+    expose_headers=["X-Request-ID"],
+    max_age=600,
 )
 
 # Initialize database tables (for demo; in production, prefer migrations)
@@ -525,6 +528,8 @@ def jira_login_options():
     return JSONResponse(status_code=200, content={})
 
 # PUBLIC_INTERFACE
+from src.api.schemas import OAuthAuthorizeURL  # at top if not already imported
+
 @app.get(
     "/auth/jira/login",
     tags=["Auth"],
@@ -534,6 +539,7 @@ def jira_login_options():
         "Response body contains the full authorize URL with audience=api.atlassian.com, response_type=code, prompt=consent, "
         "client_id from env, scope (default: 'read:jira-work read:jira-user offline_access'), and redirect_uri computed from env/request."
     ),
+    response_model=OAuthAuthorizeURL,
 )
 def jira_login(
     request: Request,
