@@ -96,6 +96,23 @@ def test_jira_callback_accepts_standard_state_without_raw_state(monkeypatch):
         assert u.jira_refresh_token == "test_refresh_token"
 
 
+def test_jira_callback_accepts_missing_state_query_param(monkeypatch):
+    _patch_httpx(monkeypatch)
+    _clear_users()
+
+    client = TestClient(app, follow_redirects=False)
+    # No state param at all, only code
+    resp = client.get("/auth/jira/callback?code=onlycode")
+    assert resp.status_code in (302, 307)
+
+    with SessionLocal() as db:
+        users = db.query(User).all()
+        assert len(users) == 1
+        u = users[0]
+        assert u.jira_token == "test_access_token"
+        assert u.jira_refresh_token == "test_refresh_token"
+
+
 def test_jira_callback_creates_placeholder_user_when_none(monkeypatch):
     _patch_httpx(monkeypatch)
     _clear_users()

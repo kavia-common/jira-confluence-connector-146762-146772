@@ -122,6 +122,12 @@ def oauth_login(
             samesite="lax",
             path="/",
         )
+        # lightweight debug indicator to confirm cookie set when using connectors route
+        try:
+            from src.api.main import _log_event
+            _log_event(20, "oauth_state_cookie_set", request, provider="jira", cookie=_STATE_COOKIE_NAME, router="connectors")
+        except Exception:
+            pass
         return response
     resp = JSONResponse(status_code=200, content={"url": url})
     resp.set_cookie(
@@ -133,6 +139,11 @@ def oauth_login(
         samesite="lax",
         path="/",
     )
+    try:
+        from src.api.main import _log_event
+        _log_event(20, "oauth_state_cookie_set", request, provider="jira", cookie=_STATE_COOKIE_NAME, router="connectors", mode="json")
+    except Exception:
+        pass
     return resp
 
 

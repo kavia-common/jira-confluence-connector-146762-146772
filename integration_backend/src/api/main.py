@@ -794,6 +794,7 @@ def jira_login(
                 samesite="lax",
                 path="/",
             )
+            _log_event(logging.INFO, "oauth_state_cookie_set", request, provider=provider, cookie=_STATE_COOKIE_NAME, mode="redirect")
             return response
 
         # Return 200 with the URL for clients to navigate and log it for verification
@@ -830,6 +831,7 @@ def jira_login(
             samesite="lax",
             path="/",
         )
+        _log_event(logging.INFO, "oauth_state_cookie_set", request, provider=provider, cookie=_STATE_COOKIE_NAME, mode="json")
         return response
     except HTTPException:
         APP_LOGGER.exception("OAuth login HTTPException", extra={
@@ -957,7 +959,7 @@ async def jira_callback(
       - If a server-generated CSRF 'state' is present, it will be verified against the signed cookie.
     """
     provider = "jira"
-    _log_event(logging.INFO, "oauth_callback_received", request, provider=provider)
+    _log_event(logging.INFO, "oauth_callback_received", request, provider=provider, has_state=bool(state))
     # Verify CSRF state if provided by Atlassian
     try:
         cookie_state = request.cookies.get(_STATE_COOKIE_NAME)
