@@ -444,15 +444,11 @@ def health_authorize_url_probe(request: Request):
     client_id = (cfg.get("client_id") or "").strip()
     # Use same guard/builder as login route
     try:
-        # Strictly use JIRA_REDIRECT_URI or derive from current request host; fallback to fixed host
+        # Strictly use JIRA_REDIRECT_URI; no fallbacks
         jira_override = os.getenv("JIRA_REDIRECT_URI", "").strip()
-        if jira_override:
-            redirect_uri = jira_override
-        else:
-            from src.api.oauth_config import choose_jira_redirect_with_request  # type: ignore
-            redirect_uri = choose_jira_redirect_with_request(request, "/auth/jira/callback")
+        redirect_uri = jira_override
     except Exception:
-        redirect_uri = "https://vscode-internal-36200-beta.beta01.cloud.kavia.ai:3001/auth/jira/callback"
+        redirect_uri = ""
 
     if not client_id or not redirect_uri:
         return _ocean_response(
@@ -491,22 +487,10 @@ def health_redirect_pieces(request: Request):
     """
     try:
         override = os.getenv("JIRA_REDIRECT_URI", "").strip()
-        if override:
-            redirect_uri = override
-            source = "env"
-        else:
-            from src.api.oauth_config import _pick_scheme_host_from_headers  # type: ignore
-            scheme, host_port = _pick_scheme_host_from_headers(request)
-            path = "/auth/jira/callback"
-            if scheme and host_port:
-                # host_port already enforced to include :3001 when missing by helper
-                redirect_uri = f"{scheme}://{host_port}{path}"
-                source = "request"
-            else:
-                redirect_uri = "https://vscode-internal-36200-beta.beta01.cloud.kavia.ai:3001/auth/jira/callback"
-                source = "default"
-        encoded = urllib.parse.quote(redirect_uri, safe="")
-        parsed = urllib.parse.urlparse(redirect_uri)
+        redirect_uri = override
+        source = "env"
+        encoded = urllib.parse.quote(redirect_uri, safe="") if redirect_uri else ""
+        parsed = urllib.parse.urlparse(redirect_uri) if redirect_uri else urllib.parse.urlparse("")
         return _ocean_response(
             {
                 "scheme": parsed.scheme,
@@ -595,30 +579,18 @@ def jira_login(
 
         try:
             override = os.getenv("JIRA_REDIRECT_URI", "").strip()
-            if override:
-                redirect_uri = override
-                _log_event(
-                    logging.INFO,
-                    "oauth_redirect_uri_source",
-                    request,
-                    provider=provider,
-                    source_env="JIRA_REDIRECT_URI",
-                    redirect_uri=redirect_uri,
-                )
-            else:
-                from src.api.oauth_config import choose_jira_redirect_with_request  # type: ignore
-                redirect_uri = choose_jira_redirect_with_request(request, "/auth/jira/callback")
-                _log_event(
-                    logging.INFO,
-                    "oauth_redirect_uri_source",
-                    request,
-                    provider=provider,
-                    source_env="request",
-                    redirect_uri=redirect_uri,
-                )
+            redirect_uri = override
+            _log_event(
+                logging.INFO,
+                "oauth_redirect_uri_source",
+                request,
+                provider=provider,
+                source_env="JIRA_REDIRECT_URI",
+                redirect_uri=redirect_uri,
+            )
         except Exception as e:
             _log_event(logging.WARNING, "oauth_redirect_uri_builder_exception", request, provider=provider, error=str(e))
-            redirect_uri = "https://vscode-internal-36200-beta.beta01.cloud.kavia.ai:3001/auth/jira/callback"
+            redirect_uri = ""
 
         # Presence flags and derived missing map (True means the field is missing)
         presence = {
