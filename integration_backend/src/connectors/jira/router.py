@@ -164,17 +164,36 @@ def oauth_callback(
     """Exchange authorization code for tokens and persist them for the tenant."""
     if not code:
         raise HTTPException(status_code=400, detail="Missing authorization code")
+
+    # Strict state validation using backend cookie/signature to prevent CSRF
+    cookie_state = request.cookies.get("jira_oauth_state")
+    if not state:
+        raise HTTPException(status_code=422, detail="Missing state parameter")
+    csrf_from_state: Optional[str] = None
+    try:
+        import json as _json
+        parsed = _json.loads(state)
+        if isinstance(parsed, dict):
+            csrf_from_state = parsed.get("csrf") if isinstance(parsed.get("csrf"), str) else None
+    except Exception:
+        csrf_from_state = None
+    if not csrf_from_state:
+        raise HTTPException(status_code=422, detail="Invalid state format")
+    from src.api.main import _verify_signed_state as _vss
+    import hmac as _hmac
+    if not cookie_state or not _vss(csrf_from_state) or not _hmac.compare_digest(str(cookie_state), str(csrf_from_state)):
+        raise HTTPException(status_code=422, detail="State mismatch")
+
     tenant = _resolve_tenant_id(request, tenant_id)
     # If state carries a tenant hint, prefer that.
-    if state:
-        try:
-            import json
+    try:
+        import json
+        j = json.loads(state)
+        if isinstance(j, dict) and j.get("tenant_id"):
+            tenant = j.get("tenant_id")
+    except Exception:
+        pass
 
-            j = json.loads(state)
-            if isinstance(j, dict) and j.get("tenant_id"):
-                tenant = j.get("tenant_id")
-        except Exception:
-            pass
     connector = JiraConnector().with_db(db)
     return connector.oauth_callback(code=code, tenant_id=tenant, state=state)
 

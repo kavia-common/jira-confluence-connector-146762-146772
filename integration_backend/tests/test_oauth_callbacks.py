@@ -78,31 +78,57 @@ def _clear_users():
             raise
 
 
-def test_jira_callback_accepts_standard_state_without_raw_state(monkeypatch):
+def _start_jira_login_and_get_state_cookie(client: TestClient) -> tuple[str, str]:
+    # Hit login to generate state cookie and retrieve authorize URL (JSON mode)
+    r = client.get("/auth/jira/login")
+    assert r.status_code == 200
+    url = r.json().get("url")
+    # Extract the compound state from URL query for callback simulation
+    from urllib.parse import urlparse, parse_qs
+    qs = parse_qs(urlparse(url).query)
+    assert "state" in qs and qs["state"]
+    state = qs["state"][0]
+    # Grab cookie value
+    cookie_val = r.cookies.get("jira_oauth_state")
+    assert cookie_val is not None
+    return state, cookie_val
+
+
+def test_jira_callback_rejects_missing_state(monkeypatch):
     _patch_httpx(monkeypatch)
     _clear_users()
-
     client = TestClient(app, follow_redirects=False)
-    # Simulate Atlassian redirect with code and standard 'state' only
-    resp = client.get("/auth/jira/callback?code=demo&state=kc-oauth")
-    assert resp.status_code in (302, 307)
 
-    # Ensure a user was created and tokens stored
-    with SessionLocal() as db:
-        users = db.query(User).all()
-        assert len(users) == 1
-        u = users[0]
-        assert u.jira_token == "test_access_token"
-        assert u.jira_refresh_token == "test_refresh_token"
-
-
-def test_jira_callback_accepts_missing_state_query_param(monkeypatch):
-    _patch_httpx(monkeypatch)
-    _clear_users()
-
-    client = TestClient(app, follow_redirects=False)
-    # No state param at all, only code
+    # Missing state should be 422
     resp = client.get("/auth/jira/callback?code=onlycode")
+    assert resp.status_code == 422
+    assert resp.json().get("detail") == "Missing state parameter"
+
+
+def test_jira_callback_rejects_mismatched_state(monkeypatch):
+    _patch_httpx(monkeypatch)
+    _clear_users()
+    client = TestClient(app, follow_redirects=False)
+
+    # Prepare a valid cookie via login, then tamper state
+    _state, cookie = _start_jira_login_and_get_state_cookie(client)
+    # Simulate callback with a different state (invalid CSRF)
+    bad_state = '{"csrf":"invalid-signature"}'
+    client.cookies.set("jira_oauth_state", cookie)
+    resp = client.get(f"/auth/jira/callback?code=abc&state={bad_state}")
+    assert resp.status_code == 422
+    assert resp.json().get("detail") in ("State mismatch", "Invalid state format")
+
+
+def test_jira_callback_accepts_matched_state(monkeypatch):
+    _patch_httpx(monkeypatch)
+    _clear_users()
+    client = TestClient(app, follow_redirects=False)
+
+    state, cookie = _start_jira_login_and_get_state_cookie(client)
+    # Ensure cookie is present for subsequent request
+    client.cookies.set("jira_oauth_state", cookie)
+    resp = client.get(f"/auth/jira/callback?code=demo&state={state}")
     assert resp.status_code in (302, 307)
 
     with SessionLocal() as db:
