@@ -545,7 +545,11 @@ def jira_login_options():
     "/auth/jira/login",
     tags=["Auth"],
     summary="Start Jira OAuth 2.0 login",
-    description="Returns JSON authorize URL by default; add ?redirect=true to receive a 307 redirect to Atlassian (Cache-Control: no-store).",
+    description=(
+        "Returns JSON authorize URL by default; add ?redirect=true to receive a 307 redirect to Atlassian (Cache-Control: no-store). "
+        "Response body contains the full authorize URL with audience=api.atlassian.com, response_type=code, prompt=consent, "
+        "client_id from env, scope (default: 'read:jira-work read:jira-user offline_access'), and redirect_uri computed from env/request."
+    ),
 )
 def jira_login(
     request: Request,
