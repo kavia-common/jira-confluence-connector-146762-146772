@@ -12,7 +12,8 @@ Required environment variables (example .env is provided separately):
 
 Redirect URI precedence (strict):
 1) JIRA_REDIRECT_URI if set (used verbatim)
-2) Deployment default: https://vscode-internal-36200-beta.beta01.cloud.kavia.ai:3001/auth/jira/callback
+2) Request-aware builder using X-Forwarded-Proto/Host + Request.url_for('jira_callback')
+3) Deployment default: https://vscode-internal-36200-beta.beta01.cloud.kavia.ai:3001/auth/jira/callback
 
 Notes:
 - No legacy/front-end/alias fallbacks are used.
@@ -238,7 +239,7 @@ def _choose_canonical_redirect(default_path: str) -> str:
 
     Strict precedence:
       1) JIRA_REDIRECT_URI (used verbatim)
-      2) Dynamic URL based on current request host/proto if available (via _choose_canonical_redirect_from_request)
+      2) Request-aware builder using X-Forwarded-Proto/Host and Request.url_for('jira_callback')
       3) Deployment default: https://vscode-internal-36200-beta.beta01.cloud.kavia.ai:3001/auth/jira/callback
 
     Notes:

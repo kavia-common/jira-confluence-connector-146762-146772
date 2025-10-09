@@ -408,7 +408,7 @@ def health_authorize_url_probe(request: Request):
     client_id = (cfg.get("client_id") or "").strip()
     # Use same guard/builder as login route
     try:
-        # Strictly use JIRA_REDIRECT_URI or derive from current request host
+        # Strictly use JIRA_REDIRECT_URI or derive from current request host; fallback to fixed host
         jira_override = os.getenv("JIRA_REDIRECT_URI", "").strip()
         if jira_override:
             redirect_uri = jira_override
@@ -416,7 +416,7 @@ def health_authorize_url_probe(request: Request):
             from src.api.oauth_config import choose_jira_redirect_with_request  # type: ignore
             redirect_uri = choose_jira_redirect_with_request(request, "/auth/jira/callback")
     except Exception:
-        redirect_uri = (cfg.get("redirect_uri") or "").strip()
+        redirect_uri = "https://vscode-internal-36200-beta.beta01.cloud.kavia.ai:3001/auth/jira/callback"
 
     if not client_id or not redirect_uri:
         return _ocean_response(
@@ -481,11 +481,13 @@ def jira_login(
         cfg = get_jira_oauth_config()
         client_id = (cfg.get("client_id") or "").strip()
         client_secret = (cfg.get("client_secret") or "").strip()
-        redirect_uri = (cfg.get("redirect_uri") or "").strip()
+        # Build redirect_uri with strict priority:
+        # 1) explicit env JIRA_REDIRECT_URI
+        # 2) request-aware builder (X-Forwarded-Proto/Host + url_for('jira_callback'))
+        # 3) final fallback fixed host
         app_env = (cfg.get("app_env") or "production").lower()
         dev_mode = str(cfg.get("dev_mode") or "").lower() in ("true", "1", "yes")
 
-        # Strict: only use JIRA_REDIRECT_URI or the strict default builder
         try:
             override = os.getenv("JIRA_REDIRECT_URI", "").strip()
             if override:
@@ -510,8 +512,8 @@ def jira_login(
                     redirect_uri=redirect_uri,
                 )
         except Exception as e:
-            # Keep existing redirect_uri from cfg but log the error path
             _log_event(logging.WARNING, "oauth_redirect_uri_builder_exception", request, provider=provider, error=str(e))
+            redirect_uri = "https://vscode-internal-36200-beta.beta01.cloud.kavia.ai:3001/auth/jira/callback"
 
         # Presence flags and derived missing map (True means the field is missing)
         presence = {
