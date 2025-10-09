@@ -463,6 +463,7 @@ def health_redirect_pieces(request: Request):
             scheme, host_port = _pick_scheme_host_from_headers(request)
             path = "/auth/jira/callback"
             if scheme and host_port:
+                # host_port already enforced to include :3001 when missing by helper
                 redirect_uri = f"{scheme}://{host_port}{path}"
                 source = "request"
             else:

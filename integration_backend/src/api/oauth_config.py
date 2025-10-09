@@ -265,7 +265,9 @@ def _pick_scheme_host_from_headers(request: Request) -> tuple[str | None, str | 
       - X-Forwarded-Proto and X-Forwarded-Host if present
       - Fallback to Host header and request.url.scheme/netloc
 
-    Always preserve explicit port if provided by headers or URL (e.g., :3001).
+    Behavior for this environment:
+      - If an explicit port is missing from host and scheme is https, force-append :3001
+      - Always preserve explicit port if provided by headers or URL (e.g., :3001).
     """
     # Prefer explicit forwarded values
     proto = (request.headers.get("x-forwarded-proto") or request.headers.get("x-scheme") or "").strip().lower()
@@ -283,6 +285,12 @@ def _pick_scheme_host_from_headers(request: Request) -> tuple[str | None, str | 
         # Prefer Host header (may include port), else request.url.netloc
         host_port = (request.headers.get("host") or request.url.netloc or "").strip()
 
+    # For this environment ensure :3001 is present when not provided (only when building backend callback)
+    if host_port and ":" not in host_port:
+        # Only enforce for https to match deployment URL pattern
+        if (scheme or "").lower() == "https":
+            host_port = f"{host_port}:3001"
+
     host_port = host_port or None
     scheme = scheme or None
     return scheme, host_port
@@ -294,13 +302,16 @@ def choose_jira_redirect_with_request(request: Request, callback_path: str = "/a
       1) JIRA_REDIRECT_URI env override if set (verbatim)
       2) Current request's external scheme and host:port (X-Forwarded-Proto/Host aware) + callback_path
       3) Safe default for this deployment (explicit :3001)
+
+    Additional rule for this environment:
+      - When deriving from request and the computed netloc lacks an explicit port, force-append :3001.
     """
     # 1) Env override
     env_val, _ = _resolve_env(JIRA_REDIRECT_ENV_CANDIDATES)
     if env_val and env_val.strip():
         return env_val.strip()
 
-    # 2) From current request context with port preservation
+    # 2) From current request context with port enforcement handled in helper
     scheme, host_port = _pick_scheme_host_from_headers(request)
     if scheme and host_port:
         path = callback_path if callback_path.startswith("/") else f"/{callback_path}"
@@ -310,9 +321,11 @@ def choose_jira_redirect_with_request(request: Request, callback_path: str = "/a
     try:
         abs_url = str(request.url_for("jira_callback"))
         if abs_url:
-            # Ensure path is '/auth/jira/callback' and preserve netloc (including port) from abs_url
             parsed = urllib.parse.urlparse(abs_url)
-            netloc = parsed.netloc
+            netloc = parsed.netloc or ""
+            # Enforce :3001 if missing
+            if netloc and ":" not in netloc and (parsed.scheme or "https") == "https":
+                netloc = f"{netloc}:3001"
             eff_scheme = parsed.scheme or scheme or "https"
             path = callback_path if callback_path.startswith("/") else f"/{callback_path}"
             if netloc:
