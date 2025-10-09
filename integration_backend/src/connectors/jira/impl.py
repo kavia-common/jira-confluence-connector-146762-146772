@@ -29,13 +29,21 @@ class JiraConnector(BaseConnector):
         redirect_uri = cfg.get("redirect_uri") or ""
         scopes = scopes or self._default_scopes()
 
-        # Encode tenant_id inside state as JSON if user provided state
+        # Respect pre-built compound JSON state (e.g., {"csrf": "...", "client": "...", "tenant_id": "..."})
         compound_state: Optional[str] = None
         if state:
             try:
-                compound_state = json.dumps({"tenant_id": tenant_id, "state": state}, separators=(",", ":"))
+                parsed = json.loads(state)
+                if isinstance(parsed, dict):
+                    if "tenant_id" not in parsed:
+                        parsed["tenant_id"] = tenant_id
+                    compound_state = json.dumps(parsed, separators=(",", ":"))
+                else:
+                    # Non-JSON state: wrap alongside tenant hint
+                    compound_state = json.dumps({"tenant_id": tenant_id, "state": state}, separators=(",", ":"))
             except Exception:
-                compound_state = state
+                # Malformed JSON -> wrap as string
+                compound_state = json.dumps({"tenant_id": tenant_id, "state": state}, separators=(",", ":"))
         else:
             compound_state = json.dumps({"tenant_id": tenant_id}, separators=(",", ":"))
 

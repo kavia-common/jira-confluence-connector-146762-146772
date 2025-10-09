@@ -97,12 +97,43 @@ def oauth_login(
     """Initiate Jira OAuth for a tenant. Returns URL or performs 307 redirect."""
     connector = JiraConnector().with_db(db)
     tenant = _resolve_tenant_id(request, tenant_id)
-    url = connector.oauth_authorize_url(tenant_id=tenant, state=state, scopes=scopes)
+
+    # Generate backend CSRF state and embed client-provided state as hint
+    import json as _json
+    from src.api.main import _gen_csrf_state, _sign_state, _STATE_COOKIE_NAME, _STATE_COOKIE_TTL  # reuse helpers
+
+    csrf_raw = _gen_csrf_state()
+    signed_csrf = _sign_state(csrf_raw)
+    compound_state_obj = {"csrf": signed_csrf, "tenant_id": tenant}
+    if state:
+        compound_state_obj["client"] = state
+    compound_state = _json.dumps(compound_state_obj, separators=(",", ":"))
+
+    url = connector.oauth_authorize_url(tenant_id=tenant, state=compound_state, scopes=scopes)
     if redirect:
         response = RedirectResponse(url=url, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
         response.headers["Cache-Control"] = "no-store"
+        response.set_cookie(
+            key=_STATE_COOKIE_NAME,
+            value=signed_csrf,
+            max_age=_STATE_COOKIE_TTL,
+            httponly=True,
+            secure=True,
+            samesite="lax",
+            path="/",
+        )
         return response
-    return JSONResponse(status_code=200, content={"url": url})
+    resp = JSONResponse(status_code=200, content={"url": url})
+    resp.set_cookie(
+        key=_STATE_COOKIE_NAME,
+        value=signed_csrf,
+        max_age=_STATE_COOKIE_TTL,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        path="/",
+    )
+    return resp
 
 
 # PUBLIC_INTERFACE

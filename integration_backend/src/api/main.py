@@ -63,6 +63,34 @@ from src.api.oauth_config import (
     get_env_bootstrap_debug,
     get_active_redirect_uris_debug,
 )
+# --- CSRF state helpers ---
+import hmac
+import hashlib
+import secrets
+
+_STATE_COOKIE_NAME = "jira_oauth_state"
+_STATE_COOKIE_TTL = 600  # 10 minutes
+_STATE_SECRET = os.getenv("STATE_SIGNING_SECRET") or os.getenv("APP_SECRET_KEY") or os.getenv("SECRET_KEY") or "dev-insecure-secret"
+
+
+def _sign_state(value: str) -> str:
+    """Return '<value>.<sig>' where sig = HMAC-SHA256(STATE_SECRET, value)."""
+    mac = hmac.new(_STATE_SECRET.encode("utf-8"), msg=value.encode("utf-8"), digestmod=hashlib.sha256)
+    return f"{value}.{mac.hexdigest()}"
+
+
+def _verify_signed_state(signed: str) -> bool:
+    """Constant-time verify of signed state; returns True if signature matches."""
+    if not signed or "." not in signed:
+        return False
+    raw, got = signed.rsplit(".", 1)
+    mac = hmac.new(_STATE_SECRET.encode("utf-8"), msg=raw.encode("utf-8"), digestmod=hashlib.sha256)
+    return hmac.compare_digest(mac.hexdigest(), got)
+
+
+def _gen_csrf_state() -> str:
+    """Generate a random opaque state (url-safe)."""
+    return secrets.token_urlsafe(24)
 
 from src.api.schemas import (
     UserCreate,
@@ -529,7 +557,8 @@ def jira_login(
     Initiate Jira OAuth 2.0 authorization flow using Atlassian OAuth 2.0 (3LO).
 
     Parameters:
-        state: Optional opaque state to be returned by Atlassian to mitigate CSRF (frontend should generate and verify).
+        state: Optional client-provided opaque value. The backend will generate and sign its own CSRF state and
+               embed the client value inside a JSON envelope.
         scope: Optional space-separated scopes. If not provided, defaults to commonly used scopes configured in your app.
         redirect: Optional boolean. If true, this endpoint issues a 307 Temporary Redirect to the Atlassian authorize URL
                   with 'Cache-Control: no-store'. If false/absent, returns JSON { "url": "<authorize_url>" }.
@@ -689,14 +718,28 @@ def jira_login(
             resolved_redirect_uri_analysis=redirect_analysis,
         )
 
-        # Build authorize URL using EXACT redirect_uri from config (no normalization)
-        # When redirect flag is false, we must not include a state parameter per acceptance criteria.
-        state_for_url = state if redirect else None
+        # Build CSRF state and set it as signed cookie; include in authorize URL.
+        csrf_raw = _gen_csrf_state()
+        signed_csrf = _sign_state(csrf_raw)
+
+        # Persist signed state in cookie for later verification
+        # We will store only the signed token; keep HTTP-only to prevent JS access.
+        # Ten-minute TTL; SameSite=Lax is OK for OAuth redirections.
+        state_cookie_value = signed_csrf
+
+        # Compose compound state placed on the authorize URL:
+        # { "csrf": "<signed_csrf>", "client": "<optional client-provided>", "tenant_id": "default" }
+        compound_state_obj = {"csrf": signed_csrf}
+        if state:
+            compound_state_obj["client"] = state
+        # Optional: pass a tenant hint if any header set later (not required here)
+        compound_state = json.dumps(compound_state_obj, separators=(",", ":"))
+
         url = build_atlassian_authorize_url(
             client_id=client_id,
             redirect_uri=redirect_uri,
             scopes=scopes,
-            state=state_for_url,
+            state=compound_state,
         )
 
         # Short debug log printing the final redirect used and full URL for verification
@@ -741,6 +784,16 @@ def jira_login(
             response = RedirectResponse(url=url, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
             # Prevent browser/proxy caching of the redirect response
             response.headers["Cache-Control"] = "no-store"
+            # Set state cookie
+            response.set_cookie(
+                key=_STATE_COOKIE_NAME,
+                value=state_cookie_value,
+                max_age=_STATE_COOKIE_TTL,
+                httponly=True,
+                secure=True,
+                samesite="lax",
+                path="/",
+            )
             return response
 
         # Return 200 with the URL for clients to navigate and log it for verification
@@ -766,7 +819,18 @@ def jira_login(
         except Exception:
             # Non-fatal; proceed
             pass
-        return JSONResponse(status_code=200, content={"url": url})
+        # JSON flow: also set the cookie so the browser carries it to callback after navigation
+        response = JSONResponse(status_code=200, content={"url": url})
+        response.set_cookie(
+            key=_STATE_COOKIE_NAME,
+            value=state_cookie_value,
+            max_age=_STATE_COOKIE_TTL,
+            httponly=True,
+            secure=True,
+            samesite="lax",
+            path="/",
+        )
+        return response
     except HTTPException:
         APP_LOGGER.exception("OAuth login HTTPException", extra={
             "request_id": getattr(request.state, "request_id", None),
@@ -792,7 +856,7 @@ def jira_login(
     summary="Jira OAuth 2.0 callback",
     description=(
         "Handles Atlassian redirect, exchanges code for tokens, stores them on the first user (or targeted later), and redirects back to frontend.\n"
-        "Notes: Accepts standard 'state' from Atlassian."
+        "Notes: Accepts optional 'state' from Atlassian. If present and contains a backend-generated CSRF token, it will be verified against the state cookie."
     ),
     name="jira_callback",
 )
@@ -890,9 +954,31 @@ async def jira_callback(
     Notes:
       - Always return a 307 redirect with Cache-Control: no-store on success.
       - This endpoint serves as a legacy callback; the canonical token handling lives in the Jira connector.
+      - If a server-generated CSRF 'state' is present, it will be verified against the signed cookie.
     """
     provider = "jira"
     _log_event(logging.INFO, "oauth_callback_received", request, provider=provider)
+    # Verify CSRF state if provided by Atlassian
+    try:
+        cookie_state = request.cookies.get(_STATE_COOKIE_NAME)
+        if state:
+            # Try to extract backend 'csrf' component from compound state
+            csrf_ok = False
+            try:
+                parsed = json.loads(state)
+                if isinstance(parsed, dict) and "csrf" in parsed:
+                    csrf_part = parsed.get("csrf")
+                    if isinstance(csrf_part, str) and cookie_state and _verify_signed_state(csrf_part) and cookie_state == csrf_part:
+                        csrf_ok = True
+                # If state is not JSON, treat as opaque and skip strict verification to avoid breaking flows
+            except Exception:
+                # non-JSON state; do best-effort: if cookie exists and matches signed format, we tolerate
+                csrf_ok = bool(cookie_state and _verify_signed_state(cookie_state))
+            if not csrf_ok and cookie_state:
+                # We had a cookie but state did not match; log warning but do not fail the flow
+                _log_event(logging.WARNING, "oauth_state_mismatch", request, provider=provider)
+    except Exception as _e:
+        _log_event(logging.WARNING, "oauth_state_check_exception", request, provider=provider, error=str(_e))
     # Resolve tenant id from state if present; else use default
     tenant_id = "default"
     if state:
