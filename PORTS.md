@@ -8,7 +8,7 @@ Ports Convention
   - NEXT_PUBLIC_BACKEND_BASE_URL should reference :3001.
 
 Deployment callback requirement:
-- ATLASSIAN_REDIRECT_URI=https://vscode-internal-29161-beta.beta01.cloud.kavia.ai:3001/api/oauth/callback/jira
+- ATLASSIAN_REDIRECT_URI=https://vscode-internal-36200-beta.beta01.cloud.kavia.ai:3001/api/oauth/callback/jira
 
 Validation checklist:
 - No references to backend on :4000.

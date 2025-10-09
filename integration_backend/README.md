@@ -10,9 +10,9 @@ Canonical Atlassian OAuth Redirect URI (STRICT) and Ports
   - JIRA_REDIRECT_URI (required; if not set, a deployment default is used)
 - The exact value must be registered in the Atlassian Developer Console under Redirect URLs.
 - Default used when env is missing (for this deployment):
-  https://vscode-internal-29161-beta.beta01.cloud.kavia.ai:3001/auth/jira/callback
+  https://vscode-internal-36200-beta.beta01.cloud.kavia.ai:3001/auth/jira/callback
 - For this deployment, ensure your Atlassian app Redirect URL is exactly:
-  https://vscode-internal-29161-beta.beta01.cloud.kavia.ai:3001/auth/jira/callback
+  https://vscode-internal-36200-beta.beta01.cloud.kavia.ai:3001/auth/jira/callback
 - No legacy/front-end/alias fallbacks are used anymore.
 
 Environment variables (see .env.example)
