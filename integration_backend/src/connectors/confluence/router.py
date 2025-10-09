@@ -90,14 +90,48 @@ def oauth_login(
     redirect: Optional[bool] = Query(False),
     db=Depends(get_db),
 ):
+    """
+    Generate backend CSRF state and set HttpOnly cookie; include state in authorize URL.
+    """
     connector = ConfluenceConnector().with_db(db)
     tenant = _resolve_tenant_id(request, tenant_id)
-    url = connector.oauth_authorize_url(tenant_id=tenant, state=state, scopes=scopes)
+
+    # Generate backend CSRF state; embed client hint if provided
+    import json as _json
+    from src.api.main import _gen_csrf_state, _sign_state, _STATE_COOKIE_NAME, _STATE_COOKIE_TTL  # reuse helpers
+
+    csrf_raw = _gen_csrf_state()
+    signed_csrf = _sign_state(csrf_raw)
+    compound_state_obj = {"csrf": signed_csrf, "tenant_id": tenant}
+    if state:
+        compound_state_obj["client"] = state
+    compound_state = _json.dumps(compound_state_obj, separators=(",", ":"))
+
+    url = connector.oauth_authorize_url(tenant_id=tenant, state=compound_state, scopes=scopes)
     if redirect:
         response = RedirectResponse(url=url, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
         response.headers["Cache-Control"] = "no-store"
+        response.set_cookie(
+            key=_STATE_COOKIE_NAME,
+            value=signed_csrf,
+            max_age=_STATE_COOKIE_TTL,
+            httponly=True,
+            secure=True,
+            samesite="lax",
+            path="/",
+        )
         return response
-    return JSONResponse(status_code=200, content={"url": url})
+    resp = JSONResponse(status_code=200, content={"url": url})
+    resp.set_cookie(
+        key=_STATE_COOKIE_NAME,
+        value=signed_csrf,
+        max_age=_STATE_COOKIE_TTL,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        path="/",
+    )
+    return resp
 
 
 # PUBLIC_INTERFACE
@@ -114,18 +148,44 @@ def oauth_callback(
     tenant_id: Optional[str] = Query(None),
     db=Depends(get_db),
 ) -> ConnectionStatus:
+    """
+    Strict CSRF/state validation mirroring Jira:
+      - require state
+      - extract csrf from JSON
+      - verify signature matches cookie
+    """
     if not code:
         raise HTTPException(status_code=400, detail="Missing authorization code")
-    tenant = _resolve_tenant_id(request, tenant_id)
-    if state:
-        try:
-            import json
 
-            j = json.loads(state)
-            if isinstance(j, dict) and j.get("tenant_id"):
-                tenant = j.get("tenant_id")
-        except Exception:
-            pass
+    cookie_state = request.cookies.get("jira_oauth_state")
+    if not state:
+        raise HTTPException(status_code=422, detail="Missing state parameter")
+
+    csrf_from_state: Optional[str] = None
+    try:
+        import json as _json
+        parsed = _json.loads(state)
+        if isinstance(parsed, dict):
+            csrf_from_state = parsed.get("csrf") if isinstance(parsed.get("csrf"), str) else None
+    except Exception:
+        csrf_from_state = None
+    if not csrf_from_state:
+        raise HTTPException(status_code=422, detail="Invalid state format")
+
+    from src.api.main import _verify_signed_state as _vss
+    import hmac as _hmac
+    if not cookie_state or not _vss(csrf_from_state) or not _hmac.compare_digest(str(cookie_state), str(csrf_from_state)):
+        raise HTTPException(status_code=422, detail="State mismatch")
+
+    tenant = _resolve_tenant_id(request, tenant_id)
+    try:
+        import json
+        j = json.loads(state)
+        if isinstance(j, dict) and j.get("tenant_id"):
+            tenant = j.get("tenant_id")
+    except Exception:
+        pass
+
     connector = ConfluenceConnector().with_db(db)
     return connector.oauth_callback(code=code, tenant_id=tenant, state=state)
 

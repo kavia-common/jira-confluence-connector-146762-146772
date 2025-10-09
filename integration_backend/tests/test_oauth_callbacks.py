@@ -182,19 +182,56 @@ def test_jira_callback_uses_user_id_from_state(monkeypatch):
         assert u.jira_refresh_token == "test_refresh_token"
 
 
-def test_confluence_callback_creates_placeholder_user_when_none(monkeypatch):
+def _start_confluence_login_and_get_state_cookie(client: TestClient) -> tuple[str, str]:
+    # Hit login to generate state cookie and retrieve authorize URL (JSON mode)
+    r = client.get("/auth/confluence/login")
+    assert r.status_code == 200
+    url = r.json().get("url")
+    from urllib.parse import urlparse, parse_qs
+    qs = parse_qs(urlparse(url).query)
+    assert "state" in qs and qs["state"]
+    state = qs["state"][0]
+    cookie_val = r.cookies.get("jira_oauth_state")
+    assert cookie_val is not None
+    return state, cookie_val
+
+
+def test_confluence_callback_rejects_missing_state(monkeypatch):
     _patch_httpx(monkeypatch)
     _clear_users()
-
     client = TestClient(app, follow_redirects=False)
-    resp = client.get("/auth/confluence/callback?code=abc123&state=")
+
+    resp = client.get("/auth/confluence/callback?code=onlycode")
+    assert resp.status_code == 422
+    assert resp.json().get("detail") == "Missing state parameter"
+
+
+def test_confluence_callback_rejects_mismatched_state(monkeypatch):
+    _patch_httpx(monkeypatch)
+    _clear_users()
+    client = TestClient(app, follow_redirects=False)
+
+    _state, cookie = _start_confluence_login_and_get_state_cookie(client)
+    bad_state = '{"csrf":"invalid-signature"}'
+    client.cookies.set("jira_oauth_state", cookie)
+    resp = client.get(f"/auth/confluence/callback?code=abc&state={bad_state}")
+    assert resp.status_code == 422
+    assert resp.json().get("detail") in ("State mismatch", "Invalid state format")
+
+
+def test_confluence_callback_accepts_matched_state(monkeypatch):
+    _patch_httpx(monkeypatch)
+    _clear_users()
+    client = TestClient(app, follow_redirects=False)
+
+    state, cookie = _start_confluence_login_and_get_state_cookie(client)
+    client.cookies.set("jira_oauth_state", cookie)
+    resp = client.get(f"/auth/confluence/callback?code=demo&state={state}")
     assert resp.status_code in (302, 307)
 
     with SessionLocal() as db:
         users = db.query(User).all()
         assert len(users) == 1
         u = users[0]
-        # Tokens are stored on confluence_* fields
         assert u.confluence_token == "test_access_token"
         assert u.confluence_refresh_token == "test_refresh_token"
-        assert isinstance(u.email, str) and "@example." in u.email

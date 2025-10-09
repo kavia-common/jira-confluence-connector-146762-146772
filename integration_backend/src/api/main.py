@@ -1136,11 +1136,26 @@ def get_user_endpoint(user_id: int, db=Depends(get_db)):
     "/auth/confluence/login",
     tags=["Auth"],
     summary="Start Confluence OAuth 2.0 login",
-    description="Redirects the user to Atlassian authorization page for Confluence scopes.",
+    description="Returns JSON authorize URL by default; add ?redirect=true to receive a 307 redirect to Atlassian (Cache-Control: no-store).",
 )
-def confluence_login(request: Request, state: Optional[str] = None, scope: Optional[str] = None):
+def confluence_login(
+    request: Request,
+    state: Optional[str] = None,
+    scope: Optional[str] = None,
+    redirect: Optional[bool] = False,
+):
     """
-    Initiate Confluence OAuth 2.0 authorization flow.
+    Initiate Confluence OAuth 2.0 authorization flow with secure backend-generated state.
+
+    Parameters:
+        state: Optional client-provided value. Backend generates CSRF state and embeds client value as hint.
+        scope: Optional scope string; defaults to sensible Confluence scopes.
+        redirect: If true, 307 redirect to Atlassian; else return JSON { "url": "<authorize_url>" }.
+
+    Behavior:
+        - Generates cryptographically random CSRF state, signs it, stores as Secure HttpOnly cookie (SameSite=Lax, 10m TTL).
+        - Includes compound state (with signed CSRF) in authorize URL.
+        - redirect=false JSON flow sets cookie and returns the URL for frontend to navigate.
     """
     provider = "confluence"
     try:
@@ -1151,14 +1166,23 @@ def confluence_login(request: Request, state: Optional[str] = None, scope: Optio
             provider=provider,
             has_state=bool(state),
             scope_count=(len(scope.split()) if scope else 0),
+            redirect_flag=bool(redirect),
         )
 
         cfg = get_confluence_oauth_config()
-        client_id = cfg.get("client_id")
-        redirect_uri = cfg.get("redirect_uri")
+        client_id = (cfg.get("client_id") or "").strip()
+        redirect_uri = (cfg.get("redirect_uri") or "").strip()
         if not client_id or not redirect_uri:
-            _log_event(logging.ERROR, "oauth_login_config_error", request, provider=provider)
-            raise HTTPException(status_code=500, detail="Confluence OAuth is not configured. Set environment variables.")
+            _log_event(logging.ERROR, "oauth_login_config_error", request, provider=provider,
+                       missing={"client_id": not bool(client_id), "redirect_uri": not bool(redirect_uri)})
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "status": "error",
+                    "message": "Confluence OAuth is not fully configured. Provide CONFLUENCE_OAUTH_CLIENT_ID and CONFLUENCE_OAUTH_REDIRECT_URI (or Jira defaults).",
+                    "missing": {"client_id": not bool(client_id), "redirect_uri": not bool(redirect_uri)},
+                },
+            )
 
         default_scopes = [
             "read:confluence-content.all",
@@ -1167,30 +1191,21 @@ def confluence_login(request: Request, state: Optional[str] = None, scope: Optio
         ]
         scopes = scope or " ".join(default_scopes)
 
-        authorize_url = "https://auth.atlassian.com/authorize"
-        params = {
-            "audience": "api.atlassian.com",
-            "client_id": client_id,
-            "scope": scopes,
-            "redirect_uri": redirect_uri,
-            "response_type": "code",
-            "prompt": "consent",
-        }
+        # CSRF state generation and cookie set
+        csrf_raw = _gen_csrf_state()
+        signed_csrf = _sign_state(csrf_raw)
+        compound_state_obj = {"csrf": signed_csrf}
         if state:
-            params["state"] = state
-        url = f"{authorize_url}?{urllib.parse.urlencode(params)}"
-        _log_event(
-            logging.INFO,
-            "oauth_login_redirect",
-            request,
-            provider=provider,
-            authorize_endpoint=authorize_url,
-            has_state=bool(state),
-            scope_count=(len(scopes.split()) if scopes else 0),
-            configured_redirect_uri_present=bool(redirect_uri),
-            configured_redirect_uri=redirect_uri,
+            compound_state_obj["client"] = state
+        compound_state = json.dumps(compound_state_obj, separators=(",", ":"))
+
+        url = build_atlassian_authorize_url(
+            client_id=client_id,
+            redirect_uri=redirect_uri,
+            scopes=scopes,
+            state=compound_state,
         )
-        # Echo built authorize URL for verification in logs
+
         _log_event(
             logging.INFO,
             "oauth_authorize_url_echo",
@@ -1198,7 +1213,34 @@ def confluence_login(request: Request, state: Optional[str] = None, scope: Optio
             provider=provider,
             authorize_url=url,
         )
-        return RedirectResponse(url)
+
+        if redirect:
+            response = RedirectResponse(url=url, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+            response.headers["Cache-Control"] = "no-store"
+            response.set_cookie(
+                key=_STATE_COOKIE_NAME,
+                value=signed_csrf,
+                max_age=_STATE_COOKIE_TTL,
+                httponly=True,
+                secure=True,
+                samesite="lax",
+                path="/",
+            )
+            _log_event(logging.INFO, "oauth_state_cookie_set", request, provider=provider, cookie=_STATE_COOKIE_NAME, mode="redirect")
+            return response
+
+        response = JSONResponse(status_code=200, content={"url": url})
+        response.set_cookie(
+            key=_STATE_COOKIE_NAME,
+            value=signed_csrf,
+            max_age=_STATE_COOKIE_TTL,
+            httponly=True,
+            secure=True,
+            samesite="lax",
+            path="/",
+        )
+        _log_event(logging.INFO, "oauth_state_cookie_set", request, provider=provider, cookie=_STATE_COOKIE_NAME, mode="json")
+        return response
     except HTTPException:
         APP_LOGGER.exception("OAuth login HTTPException", extra={
             "request_id": getattr(request.state, "request_id", None),
@@ -1222,23 +1264,61 @@ def confluence_login(request: Request, state: Optional[str] = None, scope: Optio
     "/auth/confluence/callback",
     tags=["Auth"],
     summary="Confluence OAuth 2.0 callback",
-    description="Handles Atlassian redirect, exchanges code for tokens, stores them on the first user, and redirects back to frontend. Accepts standard 'state' parameter.",
+    description="Handles Atlassian redirect, exchanges code for tokens, stores them on the first user, and redirects back to frontend. Requires backend-generated 'state'.",
 )
 async def confluence_callback(request: Request, db=Depends(get_db), code: Optional[str] = None, state: Optional[str] = None):
     """
-    Complete Confluence OAuth 2.0 flow (token exchange and persistence).
+    Complete Confluence OAuth 2.0 flow (token exchange and persistence) with strict CSRF state validation.
+
+    Notes:
+      - Requires server-generated 'state' containing signed CSRF; must match HttpOnly cookie set at /auth/confluence/login.
+      - On success, returns 307 redirect to frontend with Cache-Control: no-store and clears state cookie.
     """
     provider = "confluence"
-    _log_event(logging.INFO, "oauth_callback_received", request, provider=provider)
+    _log_event(logging.INFO, "oauth_callback_received", request, provider=provider, has_state=bool(state))
     try:
+        if not state:
+            _log_event(logging.ERROR, "oauth_state_missing", request, provider=provider, status_code=422)
+            resp = JSONResponse(status_code=422, content={"detail": "Missing state parameter"})
+            resp.delete_cookie(_STATE_COOKIE_NAME, path="/")
+            return resp
+
+        # Extract CSRF from state JSON
+        csrf_from_state: Optional[str] = None
+        try:
+            parsed = json.loads(state)
+            if isinstance(parsed, dict):
+                csrf_from_state = parsed.get("csrf") if isinstance(parsed.get("csrf"), str) else None
+        except Exception:
+            csrf_from_state = None
+
+        if not csrf_from_state:
+            _log_event(logging.ERROR, "oauth_state_invalid_format", request, provider=provider, status_code=422)
+            resp = JSONResponse(status_code=422, content={"detail": "Invalid state format"})
+            resp.delete_cookie(_STATE_COOKIE_NAME, path="/")
+            return resp
+
+        cookie_state = request.cookies.get(_STATE_COOKIE_NAME)
+        if not cookie_state:
+            _log_event(logging.ERROR, "oauth_state_cookie_missing", request, provider=provider, status_code=422)
+            resp = JSONResponse(status_code=422, content={"detail": "State cookie missing"})
+            resp.delete_cookie(_STATE_COOKIE_NAME, path="/")
+            return resp
+
+        if not _verify_signed_state(csrf_from_state) or not hmac.compare_digest(str(cookie_state), str(csrf_from_state)):
+            _log_event(logging.ERROR, "oauth_state_mismatch", request, provider=provider, status_code=422)
+            resp = JSONResponse(status_code=422, content={"detail": "State mismatch"})
+            resp.delete_cookie(_STATE_COOKIE_NAME, path="/")
+            return resp
+
         if not code:
             _log_event(logging.ERROR, "oauth_missing_code", request, provider=provider, status_code=400)
             raise HTTPException(status_code=400, detail="Missing authorization code")
 
         cfg = get_confluence_oauth_config()
-        client_id = cfg.get("client_id")
-        client_secret = cfg.get("client_secret")
-        redirect_uri = cfg.get("redirect_uri")
+        client_id = (cfg.get("client_id") or "").strip()
+        client_secret = (cfg.get("client_secret") or "").strip()
+        redirect_uri = (cfg.get("redirect_uri") or "").strip()
         if not client_id or not client_secret or not redirect_uri:
             _log_event(logging.ERROR, "oauth_callback_config_error", request, provider=provider, status_code=400)
             raise HTTPException(
@@ -1316,7 +1396,6 @@ async def confluence_callback(request: Request, db=Depends(get_db), code: Option
         user.confluence_expires_at = int(time.time()) + int(expires_in or 0)
         from src.api.oauth_config import get_atlassian_base_url
 
-        # Commonly the wiki lives under <base>/wiki
         base = get_atlassian_base_url()
         user.confluence_base_url = (base.rstrip("/") + "/wiki") if base else user.confluence_base_url
         db.commit()
@@ -1333,7 +1412,10 @@ async def confluence_callback(request: Request, db=Depends(get_db), code: Option
         }
         redirect_to = f"{frontend.rstrip('/')}/oauth/callback?{urllib.parse.urlencode(params)}"
         _log_event(logging.INFO, "frontend_redirect", request, provider=provider, redirect=redirect_to)
-        return RedirectResponse(redirect_to)
+        response = RedirectResponse(redirect_to, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+        response.headers["Cache-Control"] = "no-store"
+        response.delete_cookie(_STATE_COOKIE_NAME, path="/")
+        return response
     except HTTPException:
         APP_LOGGER.exception("OAuth callback HTTPException", extra={
             "request_id": getattr(request.state, "request_id", None),
