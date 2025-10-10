@@ -5,12 +5,11 @@ export default function OAuthCallback() {
   const router = useRouter();
   useEffect(() => {
     const q = router.query || {};
-    const oauth = (q.oauth as string) || (q.provider as string) || "atlassian";
-    const status = (q.status as string) || "success";
     const state = (q.state as string) || "";
-    // Route to login with state reference so login page can resolve CSRF
-    const params = new URLSearchParams({ oauth, status, state });
-    window.location.replace(`/login?${params.toString()}`);
+    // Do not fetch or render any JSON. Immediately navigate to /login with state param.
+    const params = new URLSearchParams();
+    if (state) params.set("state", state);
+    router.replace(`/login${params.toString() ? `?${params.toString()}` : ""}`);
   }, [router]);
   return null;
 }

@@ -6,15 +6,15 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional, Tuple, Dict, Any
 
 import jwt  # PyJWT
-from fastapi import APIRouter, Depends, Header, Request, status
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, Depends, Header, Request, status, HTTPException
+from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from src.api.errors import http_error, ErrorCode
 from src.db.config import get_db
 from src.db.service import get_user_by_email
-from src.db.models import User
+from src.api.oauth_config import get_frontend_base_url_default
 
 try:
     import bcrypt  # type: ignore
@@ -99,33 +99,57 @@ def _verify_signed_csrf(signed: str) -> bool:
 
 router = APIRouter(tags=["Auth"])
 
+# Legacy helper retained for login route
 # PUBLIC_INTERFACE
-@router.get("/auth/csrf/resolve", summary="Resolve state to CSRF", description="Resolves a state-backed CSRF reference after OAuth and issues CSRF cookie and JSON token.")
-def csrf_resolve(state: str | None = None) -> JSONResponse:
-    """
-    Resolve a state reference to a CSRF token, set HttpOnly SameSite=Lax cookie,
-    and return token in JSON so clients can echo it via X-CSRF-Token.
-
-    Notes:
-    - For current implementation, we simply validate the HMAC signature format of the provided state
-      and reuse it as CSRF if valid. This keeps a single-click flow after OAuth.
-    - If state is missing or invalid, a new CSRF is issued to avoid blocking the login flow.
-    """
-    # Validate signed state if provided (same HMAC logic as CSRF signing)
-    token: str
-    if state and _verify_signed_csrf(state):
-        token = state
-    else:
-        raw = secrets.token_urlsafe(24)
-        token = _sign_csrf(raw)
+@router.get("/auth/csrf", summary="Issue CSRF token", description="Generates a CSRF token, sets HttpOnly SameSite=Lax cookie and returns token in JSON for header echo.")
+def get_csrf_token() -> JSONResponse:
+    """Issue a CSRF token cookie and return token in body."""
+    raw = secrets.token_urlsafe(24)
+    signed = _sign_csrf(raw)
 
     response = JSONResponse(
         status_code=status.HTTP_200_OK,
-        content={"status": "success", "token": token},
+        content={"status": "success", "token": signed},
     )
     response.set_cookie(
         key=CSRF_COOKIE_NAME,
-        value=token,
+        value=signed,
+        max_age=CSRF_COOKIE_TTL,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        path="/",
+    )
+    return response
+
+
+# PUBLIC_INTERFACE
+@router.get("/auth/csrf/resolve", summary="Resolve CSRF for current session", description="Resolves an opaque state and issues CSRF via headers. Body omits CSRF in production.")
+def csrf_resolve(state: str | None = None):
+    """
+    Resolve CSRF for current user session.
+
+    - Always returns 200 JSON with { ok: true }.
+    - CSRF token is only sent in 'X-CSRF-Token' response header and can be set as cookie.
+    - In DEV mode, also includes { csrf: <token> } in response body for compatibility.
+
+    Query:
+    - state: Optional opaque ref retained for compatibility. Not echoed back.
+    """
+    csrf_value = _sign_csrf(secrets.token_urlsafe(24))
+    headers = {
+        "X-CSRF-Token": csrf_value,
+        "Cache-Control": "no-store",
+    }
+    # Optionally also set cookie if frontend expects a cookie
+    response_body: Dict[str, Any] = {"ok": True}
+    if DEV_MODE:
+        response_body["csrf"] = csrf_value
+    response = JSONResponse(status_code=200, content=response_body, headers=headers)
+    # Keep cookie issuance for cookie/header parity
+    response.set_cookie(
+        key=CSRF_COOKIE_NAME,
+        value=csrf_value,
         max_age=CSRF_COOKIE_TTL,
         httponly=True,
         secure=True,
@@ -151,49 +175,6 @@ class LoginResponse(BaseModel):
 
 
 # PUBLIC_INTERFACE
-@router.get("/auth/csrf", summary="Issue CSRF token", description="Generates a CSRF token, sets HttpOnly SameSite=Lax cookie and returns token in JSON for header echo.")
-def get_csrf_token() -> JSONResponse:
-    """Issue a CSRF token cookie and return token in body."""
-    raw = secrets.token_urlsafe(24)
-    signed = _sign_csrf(raw)
-
-    response = JSONResponse(
-        status_code=status.HTTP_200_OK,
-        content={"status": "success", "token": signed},
-    )
-    response.set_cookie(
-        key=CSRF_COOKIE_NAME,
-        value=signed,
-        max_age=CSRF_COOKIE_TTL,
-        httponly=True,
-        secure=True,
-        samesite="lax",
-        path="/",
-    )
-    return response
-
-
-def _ensure_demo_user(db: Session) -> Optional[User]:
-    """Create a demo user if none exists and DEV_MODE=true."""
-    if not DEV_MODE:
-        return None
-    # reuse service.list_users via query
-    from sqlalchemy import select
-    from src.db.models import User as U
-    existing = db.execute(select(U).limit(1)).scalar_one_or_none()
-    if existing:
-        return existing
-    demo_email = os.getenv("DEMO_EMAIL", "demo@example.com")
-    demo_password = os.getenv("DEMO_PASSWORD", "demo1234")
-    user = U(email=demo_email, display_name="Demo User")
-    user.password_hash = hash_password(demo_password)
-    db.add(user)
-    db.commit()
-    db.refresh(user)
-    return user
-
-
-# PUBLIC_INTERFACE
 @router.post("/login", response_model=LoginResponse, summary="Login with credentials + CSRF", description="Validates CSRF and credentials. Returns access and refresh tokens.")
 def login(
     request: Request,
@@ -214,7 +195,6 @@ def login(
         return JSONResponse(status_code=400, content={"status": "error", "code": "INVALID_CSRF", "message": "CSRF token invalid"})
 
     # Credentials
-    _ensure_demo_user(db)
     identifier = payload.email or payload.username
     if not identifier:
         raise http_error(422, ErrorCode.VALIDATION, "Email or username is required")
@@ -304,70 +284,29 @@ def logout() -> JSONResponse:
     return JSONResponse(status_code=200, content={"ok": True})
 
 
-class SeedUserRequest(BaseModel):
-    """Optional payload to override default credentials for seeding."""
-    email: Optional[str] = Field(None, description="Email to seed (unique)")
-    password: Optional[str] = Field(None, description="Plaintext password to hash and store")
-    display_name: Optional[str] = Field(None, description="Optional display name")
-
-
-class SeedUserResponse(BaseModel):
-    """Response indicating seeding/upsert result."""
-    created: bool = Field(..., description="True if user was created; false if updated")
-    email: str = Field(..., description="Seeded user's email")
-    id: int = Field(..., description="User id")
-
-
 # PUBLIC_INTERFACE
-@router.post(
-    "/auth/seed-test-user",
-    summary="Seed a test user (DEV only)",
-    description="Creates or updates a test user with a bcrypt-hashed password. Only available when DEV_MODE=true.",
-)
-def seed_test_user(payload: SeedUserRequest | None = None, db: Session = Depends(get_db)) -> JSONResponse:
+@router.get("/auth/jira/callback", summary="Jira OAuth 2.0 callback", description="Never returns JSON. Always 302/303 redirects to frontend login with opaque state; CSRF is resolved via /auth/csrf/resolve.")
+def jira_callback(request: Request, state: str | None = None, code: str | None = None):
     """
-    Dev-only endpoint to create/update a test user with a bcrypt-hashed password.
+    Jira OAuth 2.0 callback.
 
-    Environment:
-      - DEV_MODE: must be true to enable this route.
-      - SEED_USER_EMAIL: default seed email (fallback to test@example.com)
-      - SEED_USER_PASSWORD: default seed password (fallback to TestPass!123)
-      - SEED_USER_DISPLAY_NAME: optional display name (fallback to 'Test User')
+    Processes Atlassian redirect and ALWAYS redirects to the frontend login route without exposing CSRF.
 
-    Request body (optional):
-      - { "email": "...", "password": "...", "display_name": "..." }
+    Parameters:
+    - state: Opaque state returned from Atlassian.
+    - code: Authorization code. Exchange should be completed server-side elsewhere.
 
-    Behavior:
-      - Upsert by email. If user exists, password_hash is replaced with the new hash.
-      - Returns JSON { created: bool, email, id }.
+    Returns:
+    - RedirectResponse (302) to FRONTEND_URL + "/login?state=<opaque_ref>" without any JSON body.
     """
-    if not DEV_MODE:
-        return JSONResponse(status_code=404, content={"status": "error", "code": "NOT_FOUND", "message": "Endpoint not available"})
+    if not state:
+        raise HTTPException(status_code=422, detail="Missing state")
 
-    # Resolve defaults from env
-    default_email = os.getenv("SEED_USER_EMAIL", os.getenv("DEMO_EMAIL", "test@example.com"))
-    default_password = os.getenv("SEED_USER_PASSWORD", os.getenv("DEMO_PASSWORD", "TestPass!123"))
-    default_display = os.getenv("SEED_USER_DISPLAY_NAME", "Test User")
+    # Do not expose CSRF. Generate an opaque reference (here we reuse a signed random)
+    opaque_ref = _sign_csrf(secrets.token_urlsafe(16))
 
-    email = (payload.email if payload and payload.email else default_email).strip()
-    password = (payload.password if payload and payload.password else default_password)
-    display = (payload.display_name if payload and payload.display_name else default_display)
+    # Optionally: perform server-side exchange if integrated. No body content is returned.
 
-    if not email or not password:
-        return JSONResponse(status_code=422, content={"status": "error", "code": "VALIDATION", "message": "email and password are required"})
-
-    # Upsert user by email
-    user = get_user_by_email(db, email)
-    created = False
-    if not user:
-        user = User(email=email, display_name=display)
-        created = True
-
-    # Always set/replace hashed password
-    user.password_hash = hash_password(password)
-    if created:
-        db.add(user)
-    db.commit()
-    db.refresh(user)
-
-    return JSONResponse(status_code=200, content={"created": created, "email": user.email, "id": user.id})
+    frontend_base = get_frontend_base_url_default() or os.getenv("NEXT_PUBLIC_APP_FRONTEND_URL") or ""
+    redirect_url = f"{frontend_base.rstrip('/')}/login?state={opaque_ref}"
+    return RedirectResponse(url=redirect_url, status_code=302)

@@ -14,8 +14,7 @@ export default function LoginPage() {
   const [error, setError] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(false);
 
-  const backendBase =
-    process.env.NEXT_PUBLIC_BACKEND_BASE_URL || "";
+  const backendBase = process.env.NEXT_PUBLIC_BACKEND_BASE_URL || "";
 
   useEffect(() => {
     async function checkSession() {
@@ -29,24 +28,30 @@ export default function LoginPage() {
         // ignore
       }
     }
-    async function fetchCsrf() {
+    async function resolveCsrf() {
       try {
         // If redirected from OAuth, resolve using state reference, else fetch fresh CSRF
         const qs = new URLSearchParams(window.location.search);
         const stateRef = qs.get("state");
-        const endpoint = stateRef ? `${backendBase}/auth/csrf/resolve?state=${encodeURIComponent(stateRef)}` : `${backendBase}/auth/csrf`;
+        const endpoint = stateRef ? `${backendBase}/auth/csrf/resolve?state=${encodeURIComponent(stateRef)}` : `${backendBase}/auth/csrf/resolve`;
         const res = await fetch(endpoint, { credentials: "include" });
-        const data = await res.json().catch(() => ({}));
-        const token = data?.token || data?.csrf_token;
+        const headerToken = res.headers.get("X-CSRF-Token");
+        if (headerToken) {
+          setCsrf(headerToken);
+          return;
+        }
+        // DEV compatibility: if body returns token field names, accept but do not render it
+        const data = await res.json().catch(() => ({} as any));
+        const token = (data && (data.token || data.csrf || data.csrf_token)) || "";
         if (token) {
           setCsrf(token);
         }
-      } catch (e) {
-        setError("Failed to fetch CSRF token");
+      } catch {
+        setError("Failed to resolve CSRF");
       }
     }
     checkSession();
-    fetchCsrf();
+    resolveCsrf();
   }, [backendBase]);
 
   async function onSubmit(e: React.FormEvent) {
@@ -68,7 +73,6 @@ export default function LoginPage() {
         setError(err?.message || err?.detail || "Login failed");
       } else {
         const data: LoginResult = await res.json();
-        // Store tokens for demo; production prefers httpOnly cookies
         localStorage.setItem("access_token", data.access_token);
         localStorage.setItem("refresh_token", data.refresh_token);
         window.location.href = "/";
