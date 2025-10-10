@@ -108,26 +108,29 @@ def jira_oauth_login(
     if redirect:
         resp = RedirectResponse(url=authorize_url, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
         resp.headers["Cache-Control"] = "no-store"
+        # Set cookie to be sent on cross-site redirect back from Atlassian:
+        # SameSite=None; Secure is required for third-party flows.
         resp.set_cookie(
             key=_STATE_COOKIE_NAME,
             value=signed_csrf,
             max_age=_STATE_COOKIE_TTL,
             httponly=True,
             secure=True,
-            samesite="lax",
+            samesite="none",
             path="/",
         )
         return resp
 
     payload = {"url": authorize_url}
     resp = JSONResponse(status_code=200, content=payload)
+    # SameSite=None; Secure to ensure browser sends cookie on Atlassian -> backend redirect
     resp.set_cookie(
         key=_STATE_COOKIE_NAME,
         value=signed_csrf,
         max_age=_STATE_COOKIE_TTL,
         httponly=True,
         secure=True,
-        samesite="lax",
+        samesite="none",
         path="/",
     )
     return resp
@@ -178,7 +181,11 @@ def jira_oauth_callback(
     if not csrf_from_state:
         raise HTTPException(status_code=422, detail="Invalid state format")
 
-    if not cookie_state or not _verify_signed_state(csrf_from_state) or not hmac.compare_digest(str(cookie_state), str(csrf_from_state)):
+    if not cookie_state:
+        raise HTTPException(status_code=422, detail="Missing state cookie")
+    if not _verify_signed_state(csrf_from_state):
+        raise HTTPException(status_code=422, detail="Invalid state signature")
+    if not hmac.compare_digest(str(cookie_state), str(csrf_from_state)):
         raise HTTPException(status_code=422, detail="State mismatch")
 
     if not code:

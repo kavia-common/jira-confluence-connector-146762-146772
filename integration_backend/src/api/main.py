@@ -77,7 +77,7 @@ openapi_tags = [
 
 app = FastAPI(
     title="Jira-Confluence Integration API",
-    description="Backend API for integrating JIRA and Confluence, with a lightweight persistence layer.",
+    description="Backend API for integrating JIRA and Confluence, with OAuth routes for Jira and Confluence documented under the 'Auth' tag.",
     version="0.1.0",
     openapi_tags=openapi_tags,
     docs_url="/docs",

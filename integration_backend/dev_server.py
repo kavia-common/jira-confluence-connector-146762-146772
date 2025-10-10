@@ -3,7 +3,9 @@ import uvicorn
 
 # PUBLIC_INTERFACE
 def main():
-    """Run the FastAPI app on port 3001 for local/dev usage."""
+    """Run the FastAPI app on port 3001 for local/dev usage.
+    Use uvicorn module path 'src.api.main:app'. Ensure PYTHONPATH includes integration_backend/.
+    """
     # Import here to surface any import-time errors in a controlled way
     try:
         from src.api.main import app  # noqa: F401
