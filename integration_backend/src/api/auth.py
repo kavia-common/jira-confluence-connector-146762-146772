@@ -6,15 +6,15 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional, Tuple, Dict, Any
 
 import jwt  # PyJWT
-from fastapi import APIRouter, Depends, Header, Request, status, HTTPException
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi import APIRouter, Depends, Header, Request, status
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from src.api.errors import http_error, ErrorCode
 from src.db.config import get_db
 from src.db.service import get_user_by_email
-from src.api.oauth_config import get_frontend_base_url_default
+
 
 try:
     import bcrypt  # type: ignore
@@ -284,29 +284,4 @@ def logout() -> JSONResponse:
     return JSONResponse(status_code=200, content={"ok": True})
 
 
-# PUBLIC_INTERFACE
-@router.get("/auth/jira/callback", summary="Jira OAuth 2.0 callback", description="Never returns JSON. Always 302/303 redirects to frontend login with opaque state; CSRF is resolved via /auth/csrf/resolve.")
-def jira_callback(request: Request, state: str | None = None, code: str | None = None):
-    """
-    Jira OAuth 2.0 callback.
 
-    Processes Atlassian redirect and ALWAYS redirects to the frontend login route without exposing CSRF.
-
-    Parameters:
-    - state: Opaque state returned from Atlassian.
-    - code: Authorization code. Exchange should be completed server-side elsewhere.
-
-    Returns:
-    - RedirectResponse (302) to FRONTEND_URL + "/login?state=<opaque_ref>" without any JSON body.
-    """
-    if not state:
-        raise HTTPException(status_code=422, detail="Missing state")
-
-    # Do not expose CSRF. Generate an opaque reference (here we reuse a signed random)
-    opaque_ref = _sign_csrf(secrets.token_urlsafe(16))
-
-    # Optionally: perform server-side exchange if integrated. No body content is returned.
-
-    frontend_base = get_frontend_base_url_default() or os.getenv("NEXT_PUBLIC_APP_FRONTEND_URL") or ""
-    redirect_url = f"{frontend_base.rstrip('/')}/login?state={opaque_ref}"
-    return RedirectResponse(url=redirect_url, status_code=302)
