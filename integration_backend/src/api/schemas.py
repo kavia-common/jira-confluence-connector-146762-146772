@@ -135,3 +135,12 @@ class ConfluencePagesFetchResponse(BaseModel):
     """Response wrapper for fetched Confluence pages (placeholder from persistence)."""
     provider: str = Field(..., description="Provider name, always 'confluence' here.")
     items: List[ConfluencePageRead] = Field(default_factory=list, description="List of stored pages.")
+
+
+# PUBLIC_INTERFACE
+class ConnectResponse(BaseModel):
+    """Response confirming connection settings were saved."""
+    provider: str = Field(..., description="Provider name, e.g., 'jira' or 'confluence'.")
+    base_url: str = Field(..., description="Saved base URL.")
+    connected: bool = Field(..., description="Whether settings were saved successfully.")
+    redirect_url: Optional[str] = Field(None, description="Optional URL to which the frontend should redirect after successful verification.")
