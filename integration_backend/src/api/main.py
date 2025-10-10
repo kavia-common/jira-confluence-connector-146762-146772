@@ -120,6 +120,10 @@ Base.metadata.create_all(bind=engine)
 from src.api.routers import connectors as connectors_router  # noqa: E402
 app.include_router(connectors_router.router)
 
+# Mount Jira OAuth auth router
+from src.api.jira_oauth import router as jira_oauth_router  # noqa: E402
+app.include_router(jira_oauth_router)
+
 # Mount static and serve favicon
 static_dir = os.path.abspath(os.path.join(os.path.dirname(os.path.dirname(__file__)), "..", "static"))
 try:

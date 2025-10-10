@@ -57,6 +57,16 @@ Seeding a test user (DEV only):
   - Creates or updates the user with a bcrypt-hashed password.
   - Response: { "created": true|false, "email": "...", "id": n }
 
+Jira OAuth endpoints (summary):
+- GET /auth/jira/login
+  - Returns JSON { url } (or 307 redirect with ?redirect=true)
+  - Sets HttpOnly cookie 'jira_oauth_state' with signed state; JSON 'state' sent to Atlassian also embeds the signed value
+  - Accepts optional ?return_url to carry back to frontend
+- GET /auth/jira/callback
+  - Validates 'state' by comparing embedded signed value with the cookie
+  - Exchanges 'code' and stores tokens using JiraConnector
+  - Redirects to return_url or FRONTEND_URL/login
+
 Default credentials:
 - Email: test@example.com
 - Password: TestPass!123

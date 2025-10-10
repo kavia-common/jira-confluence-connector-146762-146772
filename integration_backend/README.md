@@ -35,11 +35,17 @@ Connectors:
 - POST /connectors/tools/invoke   (Kavia tool adapter scaffold)
 
 OAuth:
-- /auth/jira/login -> returns authorize URL JSON by default; add ?redirect=true to 307 redirect
-- /auth/jira/callback -> validates state cookie, exchanges code, stores tokens
-- /auth/confluence/login, /auth/confluence/callback similarly supported
-- Aliases under /api/auth/* and /api/oauth/atlassian/callback available for proxy compatibility
-- State signing: HMAC with STATE_SIGNING_SECRET (or APP_SECRET_KEY/SECRET_KEY); HttpOnly SameSite=Lax cookie
+- /auth/jira/login
+  - GET returns { url: https://auth.atlassian.com/authorize?... } with proper query params (audience, client_id, scope, redirect_uri, response_type=code, prompt=consent, state)
+  - Pass ?redirect=true to receive a 307 redirect to Atlassian
+  - Generates signed state stored in HttpOnly SameSite=Lax cookie 'jira_oauth_state'
+  - Accepts optional ?return_url=... to persist and use on callback
+- /auth/jira/callback
+  - Validates presence of 'state' and matches signed cookie
+  - Exchanges 'code' for tokens, persists, and redirects to return_url (or FRONTEND_URL/login)
+- /auth/confluence/login, /auth/confluence/callback similarly supported (see connectors/confluence/router.py)
+- State signing: HMAC with STATE_SIGNING_SECRET (or CSRF_SECRET/APP_SECRET_KEY/SECRET_KEY); HttpOnly SameSite=Lax cookie
+- CORS: configured via BACKEND_CORS_ORIGINS or NEXT_PUBLIC_BACKEND_CORS_ORIGINS (comma-separated)
 
 Token refresh:
 - Jira client refreshes before expiry and retries once on 401; saves new expiry/refreshed_at.
