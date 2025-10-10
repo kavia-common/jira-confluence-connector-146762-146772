@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, NamedTuple
 from time import time
 
 # NOTE: This is an in-memory token store for scaffolding/dev only.
@@ -41,6 +41,31 @@ def save_tokens(
     )
     _STORE[_key(connector, tenant_id)] = record
 
+# Compatibility shim: db-aware save_tokens used by some connectors
+def save_tokens_db_aware(
+    *,
+    db: Any,
+    connector_id: str,
+    tenant_id: str,
+    tokens: Dict[str, Optional[str]],
+    scopes: Optional[str] = None,
+    expires_at: Optional[int] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> None:
+    """Compatibility wrapper to accept db session and tokens dict.
+
+    Maps to in-memory store for now.
+    """
+    scopes_list = scopes.split() if isinstance(scopes, str) else None
+    save_tokens(
+        connector=connector_id,
+        tenant_id=tenant_id,
+        access_token=tokens.get("access_token") or "",
+        refresh_token=tokens.get("refresh_token"),
+        expires_at=expires_at,
+        scopes=scopes_list,
+    )
+
 
 # PUBLIC_INTERFACE
 def update_meta(
@@ -77,6 +102,33 @@ def update_meta(
 def get_tokens(connector: str, tenant_id: str) -> Optional[Dict[str, Any]]:
     """Return token data for connector/tenant, if present."""
     return _STORE.get(_key(connector, tenant_id))
+
+# DB-aware compatibility: same as get_tokens but accepts db handle first
+def get_tokens_db_aware(db: Any, connector: str, tenant_id: str) -> Optional[Dict[str, Any]]:
+    """Compatibility wrapper signature get_tokens(db, connector, tenant_id)."""
+    return get_tokens(connector, tenant_id)
+
+class _TokenRecord(NamedTuple):
+    access_token: Optional[str]
+    refresh_token: Optional[str]
+    scopes: Optional[str]
+    expires_at: Optional[int]
+    last_error: Optional[str]
+
+# PUBLIC_INTERFACE
+def get_token_record(db: Any, connector_id: str, tenant_id: str) -> Optional[_TokenRecord]:
+    """Return a tuple-like record for compatibility with previous DB models."""
+    rec = get_tokens(connector_id, tenant_id)
+    if not rec:
+        return None
+    scopes_str = " ".join(rec.get("scopes") or []) if isinstance(rec.get("scopes"), list) else rec.get("scopes")
+    return _TokenRecord(
+        access_token=rec.get("access_token"),
+        refresh_token=rec.get("refresh_token"),
+        scopes=scopes_str,
+        expires_at=rec.get("expires_at"),
+        last_error=rec.get("last_error"),
+    )
 
 
 # PUBLIC_INTERFACE

@@ -4,7 +4,7 @@ FastAPI backend for Jira/Confluence connector.
 
 Running:
 - pip install -r requirements.txt
-- uvicorn integration_backend.src.api.main:app --reload --port 3001
+- uvicorn src.api.main:app --reload --port 3001
 
 Environment variables (required):
 - JIRA_OAUTH_CLIENT_ID
