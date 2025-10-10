@@ -6,8 +6,10 @@ from pydantic import BaseModel, Field
 
 # PUBLIC_INTERFACE
 class SearchResultItem(BaseModel):
-    """Normalized search item."""
+    """Normalized search item.
 
+    Public interface used across connectors to provide a consistent search result shape.
+    """
     id: str = Field(..., description="Provider-specific unique id or key")
     title: str = Field(..., description="Display title")
     url: str = Field(..., description="Deep link URL")
@@ -19,8 +21,10 @@ class SearchResultItem(BaseModel):
 
 # PUBLIC_INTERFACE
 class CreateResult(BaseModel):
-    """Normalized create result."""
+    """Normalized create result.
 
+    Returned by create operations across connectors.
+    """
     id: str = Field(..., description="Created resource id/key")
     url: Optional[str] = Field(None, description="Deep link to newly created resource")
     title: Optional[str] = Field(None, description="Title of the created resource")
@@ -30,12 +34,8 @@ class CreateResult(BaseModel):
 # PUBLIC_INTERFACE
 class ConnectionStatus(BaseModel):
     """Connection status for a tenant."""
-
     connected: bool = Field(..., description="Whether the tenant is connected")
-    scopes: Optional[List[str]] = Field(
-        default=None, description="Granted scopes, if known"
-    )
-    expires_at: Optional[int] = Field(
-        default=None, description="Epoch seconds when the access token expires"
-    )
+    scopes: Optional[List[str]] = Field(default=None, description="Granted scopes, if known")
+    expires_at: Optional[int] = Field(default=None, description="Epoch seconds when the access token expires")
+    refreshed_at: Optional[int] = Field(default=None, description="Epoch seconds when the token was last refreshed")
     error: Optional[str] = Field(default=None, description="Last error, if any")

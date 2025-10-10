@@ -1,46 +1,43 @@
-# Integration Backend (FastAPI)
+# Integration Backend
 
-This service handles OAuth 2.0 (3LO) with Atlassian for Jira and Confluence, persistence, and connector endpoints.
+FastAPI backend for Jira/Confluence connector.
 
-Canonical Atlassian OAuth Redirect URI (STRICT) and Ports
-- Ports convention:
-  - Backend (FastAPI): 3001
-  - Frontend (Next.js): 3000
-- The backend uses a single env-driven canonical redirect URI for Jira, controlled by:
-  - JIRA_REDIRECT_URI (required; if not set, a deployment default is used)
-- The exact value must be registered in the Atlassian Developer Console under Redirect URLs.
-- For this deployment, the ONLY allowed Atlassian app Redirect URL is:
-  https://vscode-internal-39285-beta.beta01.cloud.kavia.ai:3001/auth/jira/callback
-- Backend will exclusively use JIRA_REDIRECT_URI and will not derive or fallback to other URLs.
+Running:
+- pip install -r requirements.txt
+- uvicorn integration_backend.src.api.main:app --reload --port 3001
 
-Environment variables (see .env.example)
-- JIRA_REDIRECT_URI=
-- JIRA_OAUTH_CLIENT_ID=
-- JIRA_OAUTH_CLIENT_SECRET=
-- CONFLUENCE_OAUTH_CLIENT_ID=
-- CONFLUENCE_OAUTH_CLIENT_SECRET=
-- APP_FRONTEND_URL=http://localhost:3000
-- BACKEND_CORS_ORIGINS=http://localhost:3000
-- INTEGRATION_DB_URL=sqlite:///./integration.db
-- DEV_MODE=true
+Environment variables (required):
+- JIRA_OAUTH_CLIENT_ID
+- JIRA_OAUTH_CLIENT_SECRET
+- JIRA_REDIRECT_URI
+- BACKEND_CORS_ORIGINS
+- APP_FRONTEND_URL
+
+Optional:
+- ATLASSIAN_CLOUD_BASE_URL (override Jira Cloud base URL discovery)
+- ENCRYPTION_KEY (recommended)
+- INTEGRATION_DB_URL (for durable token store replacement)
+
+Tenancy:
+- All connector endpoints honor the X-Tenant-Id header; if missing, defaults to "default".
+
+Jira Endpoints:
+- GET /connectors -> list available connectors with per-tenant status {connected, scopes, expires_at, refreshed_at, last_error}
+- GET /connectors/jira/status -> connection status
+- GET /connectors/jira/projects -> list Jira projects (requires connection)
+- GET /connectors/jira/search?q=<JQL>&limit=<n> -> normalized SearchResultItem[]
+- POST /connectors/jira/create {resource:"issue", project_key, summary, description?} -> CreateResult
+- DELETE /connectors/jira/connection -> purge tokens for tenant
+- PATCH /connectors/jira/connection {base_url} -> set site base URL (optional)
+
+Errors:
+All connector routes return standardized error payloads:
+{ "status":"error", "code":"<CODE>", "message":"...", "retry_after"?:number }
+Codes: UNAUTHORIZED, TOKEN_EXPIRED, RATE_LIMITED, VALIDATION_ERROR, VENDOR_ERROR, CONFIG_ERROR.
+
+Token refresh:
+The Jira client auto-refreshes tokens if expiry is near (2 minutes window) and retries once on 401. On 429, it maps to RATE_LIMITED and surfaces Retry-After header.
 
 Notes:
-- The frontend does not send redirect_uri. It calls the backend login endpoints and the backend sets redirect_uri.
-- Backend initiates login with the exact redirect_uri resolved from environment (or the strict default).
-- You can verify which redirect URI is active via:
-  GET /health/redirect-uri
-- You can verify the full authorize URL (with encoded redirect_uri) via:
-  GET /health/authorize-url
-
-Alias callback routes
-- The backend exposes both non-/api and /api-prefixed alias routes for compatibility:
-  - /auth/jira/login and /auth/jira/callback
-  - /api/auth/jira/login and /api/auth/jira/callback
-  - /auth/confluence/login and /auth/confluence/callback
-  - /api/auth/confluence/login and /api/auth/confluence/callback
-  - Generic alias: /api/oauth/atlassian/callback (delegates to Jira handler)
-    (Note: For the Jira authorize URL, we still use JIRA_REDIRECT_URI only.)
-
-Important
-- Whatever redirect path you pick, JIRA_REDIRECT_URI must match it exactly in the Atlassian app.
-- The backend no longer derives redirect_uri from other envs or uses legacy fallbacks.
+- Redirect URI is not taken from the frontend; it is read from env JIRA_REDIRECT_URI.
+- State validation occurs in the existing auth flow; for durable storage/state, replace the in-memory token store.

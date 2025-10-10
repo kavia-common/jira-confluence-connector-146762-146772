@@ -1,89 +1,93 @@
 from __future__ import annotations
 
-import json
-from typing import Any, Dict, Optional
+from typing import Optional, Dict, Any, List
+from time import time
 
-from sqlalchemy.orm import Session
-from sqlalchemy import select, delete
+# NOTE: This is an in-memory token store for scaffolding/dev only.
+# TODO: Replace with durable store using INTEGRATION_DB_URL.
 
-from .models import ConnectorToken
-from src.connectors.base.security import encrypt_json, decrypt_json
+_STORE: Dict[str, Dict[str, Any]] = {}
+
+
+def _key(connector: str, tenant_id: str) -> str:
+    return f"{connector}:{tenant_id or 'default'}"
 
 
 # PUBLIC_INTERFACE
 def save_tokens(
-    db: Session,
-    connector_id: str,
+    connector: str,
     tenant_id: str,
-    tokens: Dict[str, Any],
-    scopes: Optional[str] = None,
+    access_token: str,
+    refresh_token: Optional[str] = None,
     expires_at: Optional[int] = None,
-    metadata: Optional[Dict[str, Any]] = None,
-) -> ConnectorToken:
-    """Persist tokens for a connector tenant (encrypted if configured). Upsert on unique key."""
-    payload_b64, enc = encrypt_json(tokens)
-    stmt = select(ConnectorToken).where(
-        ConnectorToken.connector_id == connector_id, ConnectorToken.tenant_id == tenant_id
+    scopes: Optional[List[str]] = None,
+    base_url: Optional[str] = None,
+    cloud_id: Optional[str] = None,
+    last_error: Optional[str] = None,
+) -> None:
+    """Save or update tokens for a connector/tenant."""
+    record = _STORE.get(_key(connector, tenant_id), {})
+    record.update(
+        {
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "expires_at": expires_at,
+            "scopes": scopes,
+            "base_url": base_url,
+            "cloud_id": cloud_id,
+            "last_error": last_error,
+            "updated_at": int(time()),
+        }
     )
-    row = db.execute(stmt).scalar_one_or_none()
-    if row:
-        row.token_payload = payload_b64
-        row.encrypted = enc
-        row.scopes = scopes
-        row.expires_at = expires_at
-        row.meta_json = json.dumps(metadata or {}) if metadata else row.meta_json
-    else:
-        row = ConnectorToken(
-            connector_id=connector_id,
-            tenant_id=tenant_id,
-            token_payload=payload_b64,
-            encrypted=enc,
-            scopes=scopes,
-            expires_at=expires_at,
-            meta_json=json.dumps(metadata or {}) if metadata else None,
-        )
-        db.add(row)
-    db.commit()
-    db.refresh(row)
-    return row
+    _STORE[_key(connector, tenant_id)] = record
 
 
 # PUBLIC_INTERFACE
-def get_tokens(
-    db: Session, connector_id: str, tenant_id: str
-) -> Optional[Dict[str, Any]]:
-    """Retrieve and decrypt tokens for a connector tenant. Returns None if not found."""
-    stmt = select(ConnectorToken).where(
-        ConnectorToken.connector_id == connector_id, ConnectorToken.tenant_id == tenant_id
-    )
-    row = db.execute(stmt).scalar_one_or_none()
-    if not row:
-        return None
-    try:
-        return decrypt_json(row.token_payload, row.encrypted)
-    except Exception:
-        # If decryption fails, expose no tokens
-        return None
+def update_meta(
+    connector: str,
+    tenant_id: str,
+    *,
+    refreshed_at: Optional[int] = None,
+    expires_at: Optional[int] = None,
+    scopes: Optional[List[str]] = None,
+    base_url: Optional[str] = None,
+    cloud_id: Optional[str] = None,
+    last_error: Optional[str] = None,
+) -> None:
+    """Update metadata fields for stored connection."""
+    rec = _STORE.get(_key(connector, tenant_id))
+    if not rec:
+        return
+    if refreshed_at is not None:
+        rec["refreshed_at"] = refreshed_at
+    if expires_at is not None:
+        rec["expires_at"] = expires_at
+    if scopes is not None:
+        rec["scopes"] = scopes
+    if base_url is not None:
+        rec["base_url"] = base_url
+    if cloud_id is not None:
+        rec["cloud_id"] = cloud_id
+    if last_error is not None:
+        rec["last_error"] = last_error
+    rec["updated_at"] = int(time())
 
 
 # PUBLIC_INTERFACE
-def get_token_record(
-    db: Session, connector_id: str, tenant_id: str
-) -> Optional[ConnectorToken]:
-    """Return the raw token record (metadata, expiry) without decrypting tokens."""
-    stmt = select(ConnectorToken).where(
-        ConnectorToken.connector_id == connector_id, ConnectorToken.tenant_id == tenant_id
-    )
-    return db.execute(stmt).scalar_one_or_none()
+def get_tokens(connector: str, tenant_id: str) -> Optional[Dict[str, Any]]:
+    """Return token data for connector/tenant, if present."""
+    return _STORE.get(_key(connector, tenant_id))
 
 
 # PUBLIC_INTERFACE
-def delete_tokens(db: Session, connector_id: str, tenant_id: str) -> int:
-    """Delete stored tokens for a connector tenant. Returns rows deleted."""
-    result = db.execute(
-        delete(ConnectorToken).where(
-            ConnectorToken.connector_id == connector_id, ConnectorToken.tenant_id == tenant_id
-        )
-    )
-    db.commit()
-    return result.rowcount or 0
+def delete_tokens(connector: str, tenant_id: str) -> None:
+    """Delete tokens for connector/tenant."""
+    _STORE.pop(_key(connector, tenant_id), None)
+
+
+# PUBLIC_INTERFACE
+def list_connections(connector: Optional[str] = None) -> Dict[str, Dict[str, Any]]:
+    """Return all connections or those for a specific connector."""
+    if connector is None:
+        return dict(_STORE)
+    return {k: v for k, v in _STORE.items() if k.startswith(f"{connector}:")}
