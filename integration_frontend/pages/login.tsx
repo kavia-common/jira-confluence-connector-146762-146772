@@ -34,11 +34,10 @@ export default function LoginPage() {
         const res = await fetch(`${backendBase}/auth/csrf`, {
           credentials: "include",
         });
-        const data = await res.json();
-        if (data?.token) {
-          setCsrf(data.token);
-        } else if (data?.status === "success" && data?.token) {
-          setCsrf(data.token);
+        const data = await res.json().catch(() => ({}));
+        const token = data?.token || data?.csrf_token;
+        if (token) {
+          setCsrf(token);
         }
       } catch (e) {
         setError("Failed to fetch CSRF token");
