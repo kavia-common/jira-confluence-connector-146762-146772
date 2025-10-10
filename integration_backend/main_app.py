@@ -1,0 +1,23 @@
+"""
+Stable top-level FastAPI application module.
+
+This module exposes `app` so that uvicorn can import it via:
+    uvicorn integration_backend.main_app:app --host 0.0.0.0 --port 3001
+
+It avoids relying on external PYTHONPATH configuration by adding the local
+`src` directory to sys.path at import time, then importing the actual app
+from src.api.main.
+"""
+
+import os
+import sys
+
+# Ensure local ./src is importable when the working directory is the repo root
+_here = os.path.dirname(os.path.abspath(__file__))
+_src = os.path.join(_here, "src")
+if _src not in sys.path:
+    sys.path.insert(0, _src)
+
+# PUBLIC_INTERFACE
+# Re-export FastAPI app object for uvicorn
+from src.api.main import app  # noqa: E402,F401

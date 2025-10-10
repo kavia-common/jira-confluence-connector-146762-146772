@@ -9,6 +9,7 @@ Quick start:
 
 Start the server (recommended; ensures imports resolve from any working directory):
 - python -m integration_backend.app_entrypoint
+- uvicorn integration_backend.main_app:app --host 0.0.0.0 --port 3001
 
 Alternate (when working directory is integration_backend and PYTHONPATH includes ./src):
 - python dev_server.py

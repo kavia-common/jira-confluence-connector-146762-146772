@@ -45,7 +45,10 @@ You can verify which redirect URI is active at runtime:
    - Set ATLASSIAN_CLOUD_BASE_URL, JIRA_OAUTH_CLIENT_ID/SECRET, JIRA_REDIRECT_URI, APP_FRONTEND_URL, etc.
    - For local development, keep `APP_ENV=development` and `DEV_MODE=true` to enable safe mocks.
 4. Run API:
-   - `uvicorn src.api.main:app --reload --port 3001 --app-dir integration_backend`
+   - Recommended (works from repo root without PYTHONPATH): 
+     `uvicorn integration_backend.main_app:app --host 0.0.0.0 --port 3001`
+   - Alternate (when running from integration_backend with proper PYTHONPATH): 
+     `uvicorn src.api.main:app --reload --port 3001 --app-dir integration_backend`
 5. Generate OpenAPI spec (optional, while API is running is not required):
    - `python -m src.api.generate_openapi` (run from `integration_backend` directory)
 
@@ -228,6 +231,10 @@ To improve observability for OAuth flows and diagnose 502/500s, the backend incl
   - The following query/header fields are redacted: code, state, token, access_token, refresh_token, id_token, client_secret, authorization, cookie.
 
 - You can control the log level with the `LOG_LEVEL` env var (default `INFO`).
+
+Note on uvicorn import path:
+- Use `uvicorn integration_backend.main_app:app --host 0.0.0.0 --port 3001`
+- This path is importable directly from the repository root and avoids reliance on PYTHONPATH.
 
 Example: set and trace a custom Request ID with curl
 ```
