@@ -4,7 +4,10 @@ FastAPI backend for Jira/Confluence connector.
 
 Run:
 - pip install -r requirements.txt
-- uvicorn src.api.main:app --reload --port 3001
+- cp .env.example .env  # edit values as needed (optional for dev)
+- python dev_server.py   # starts on port 3001
+# Alternatively:
+# uvicorn src.api.main:app --port 3001
 
 Server:
 - Boots on port 3001
