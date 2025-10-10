@@ -9,8 +9,8 @@ type LoginResult = {
 
 export default function LoginPage() {
   const [csrf, setCsrf] = useState<string>("");
-  const [email, setEmail] = useState<string>("");
-  const [password, setPassword] = useState<string>("");
+  const [email, setEmail] = useState<string>("demo@example.com");
+  const [password, setPassword] = useState<string>("demo1234");
   const [error, setError] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(false);
 
@@ -18,6 +18,17 @@ export default function LoginPage() {
     process.env.NEXT_PUBLIC_BACKEND_BASE_URL || "";
 
   useEffect(() => {
+    async function checkSession() {
+      try {
+        const res = await fetch(`${backendBase}/auth/session`, { credentials: "include", headers: { Authorization: `Bearer ${localStorage.getItem("access_token") || ""}` } });
+        const data = await res.json();
+        if (data?.authenticated) {
+          window.location.href = "/";
+        }
+      } catch {
+        // ignore
+      }
+    }
     async function fetchCsrf() {
       try {
         const res = await fetch(`${backendBase}/auth/csrf`, {
@@ -33,6 +44,7 @@ export default function LoginPage() {
         setError("Failed to fetch CSRF token");
       }
     }
+    checkSession();
     fetchCsrf();
   }, [backendBase]);
 
@@ -55,7 +67,7 @@ export default function LoginPage() {
         setError(err?.message || err?.detail || "Login failed");
       } else {
         const data: LoginResult = await res.json();
-        // Store tokens (for demo; production should use httpOnly cookies)
+        // Store tokens for demo; production prefers httpOnly cookies
         localStorage.setItem("access_token", data.access_token);
         localStorage.setItem("refresh_token", data.refresh_token);
         window.location.href = "/";

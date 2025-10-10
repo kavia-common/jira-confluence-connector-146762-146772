@@ -36,3 +36,27 @@ class ConnectionStatus(BaseModel):
 class OAuthAuthorizeURL(BaseModel):
     """Response model containing an OAuth authorize URL."""
     url: str = Field(..., description="Full Atlassian OAuth authorize URL to navigate to.")
+
+
+# PUBLIC_INTERFACE
+class SessionResponse(BaseModel):
+    """Session check response."""
+    authenticated: bool = Field(..., description="Whether the request has a valid session")
+    user: Optional[Dict[str, Any]] = Field(None, description="User info when authenticated")
+
+
+# PUBLIC_INTERFACE
+class LoginRequest(BaseModel):
+    """Credential login payload."""
+    email: Optional[str] = Field(None, description="User email")
+    username: Optional[str] = Field(None, description="Username")
+    password: str = Field(..., description="Password")
+
+
+# PUBLIC_INTERFACE
+class TokenResponse(BaseModel):
+    """Token response shape."""
+    access_token: str = Field(..., description="Access token")
+    refresh_token: str = Field(..., description="Refresh token")
+    token_type: str = Field(default="bearer", description="Token type")
+    expires_in: int = Field(..., description="Access token expiry in seconds")

@@ -173,9 +173,10 @@ def login(
     # CSRF validation
     cookie_csrf = request.cookies.get(CSRF_COOKIE_NAME)
     if not x_csrf_token or not cookie_csrf:
-        raise http_error(400, "CSRF_INVALID", "CSRF token invalid", details={"reason": "missing"})
+        # Standardized error format
+        return JSONResponse(status_code=400, content={"status": "error", "code": "INVALID_CSRF", "message": "CSRF token invalid"})
     if not _verify_signed_csrf(x_csrf_token) or not hmac.compare_digest(x_csrf_token, cookie_csrf):
-        raise http_error(400, "CSRF_INVALID", "CSRF token invalid", details={"reason": "mismatch"})
+        return JSONResponse(status_code=400, content={"status": "error", "code": "INVALID_CSRF", "message": "CSRF token invalid"})
 
     # Credentials
     _ensure_demo_user(db)
@@ -186,7 +187,8 @@ def login(
     # For now username maps to email field as system doesn't have separate username
     user = get_user_by_email(db, identifier)
     if not user or not user.password_hash or not verify_password(payload.password, user.password_hash):
-        raise http_error(401, "INVALID_CREDENTIALS", "Invalid username/password")
+        # Standardized error format
+        return JSONResponse(status_code=401, content={"status": "error", "code": "INVALID_CREDENTIALS", "message": "Invalid username/password"})
 
     access, refresh = _issue_token_pair(subject=str(user.id), extra_claims={"email": user.email})
     body = {
@@ -228,3 +230,40 @@ def refresh_token(payload: RefreshRequest) -> JSONResponse:
         raise http_error(401, ErrorCode.UNAUTHORIZED, "Refresh token expired")
     except Exception:
         raise http_error(400, ErrorCode.VALIDATION, "Invalid refresh token")
+
+
+# PUBLIC_INTERFACE
+@router.get("/auth/session", summary="Session check", description="Returns authenticated status and user claims if the access token is valid.")
+def session_check(authorization: Optional[str] = Header(default=None)) -> JSONResponse:
+    """
+    Validate access token from Authorization header (Bearer) and return authenticated state.
+    """
+    token = None
+    if authorization and authorization.lower().startswith("bearer "):
+        token = authorization.split(" ", 1)[1]
+    if not token:
+        return JSONResponse(status_code=200, content={"authenticated": False})
+
+    try:
+        claims = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALG])
+        if claims.get("type") != "access":
+            return JSONResponse(status_code=200, content={"authenticated": False})
+        sub = claims.get("sub")
+        email = claims.get("email")
+        return JSONResponse(status_code=200, content={"authenticated": True, "user": {"id": int(sub) if sub is not None else None, "email": email}})
+    except Exception:
+        return JSONResponse(status_code=200, content={"authenticated": False})
+
+
+class LogoutRequest(BaseModel):
+    """Logout request body (optional future enhancements)."""
+    pass
+
+
+# PUBLIC_INTERFACE
+@router.post("/auth/logout", summary="Logout", description="Client-initiated logout. For stateless JWTs, instruct clients to discard tokens.")
+def logout() -> JSONResponse:
+    """
+    Stateless logout: client should discard tokens. If using refresh token store, revoke it here.
+    """
+    return JSONResponse(status_code=200, content={"ok": True})
