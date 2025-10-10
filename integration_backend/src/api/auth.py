@@ -267,3 +267,72 @@ def logout() -> JSONResponse:
     Stateless logout: client should discard tokens. If using refresh token store, revoke it here.
     """
     return JSONResponse(status_code=200, content={"ok": True})
+
+
+class SeedUserRequest(BaseModel):
+    """Optional payload to override default credentials for seeding."""
+    email: Optional[str] = Field(None, description="Email to seed (unique)")
+    password: Optional[str] = Field(None, description="Plaintext password to hash and store")
+    display_name: Optional[str] = Field(None, description="Optional display name")
+
+
+class SeedUserResponse(BaseModel):
+    """Response indicating seeding/upsert result."""
+    created: bool = Field(..., description="True if user was created; false if updated")
+    email: str = Field(..., description="Seeded user's email")
+    id: int = Field(..., description="User id")
+
+
+# PUBLIC_INTERFACE
+@router.post(
+    "/auth/seed-test-user",
+    summary="Seed a test user (DEV only)",
+    description="Creates or updates a test user with a bcrypt-hashed password. Only available when DEV_MODE=true.",
+)
+def seed_test_user(payload: SeedUserRequest | None = None, db: Session = Depends(get_db)) -> JSONResponse:
+    """
+    Dev-only endpoint to create/update a test user with a bcrypt-hashed password.
+
+    Environment:
+      - DEV_MODE: must be true to enable this route.
+      - SEED_USER_EMAIL: default seed email (fallback to test@example.com)
+      - SEED_USER_PASSWORD: default seed password (fallback to TestPass!123)
+      - SEED_USER_DISPLAY_NAME: optional display name (fallback to 'Test User')
+
+    Request body (optional):
+      - { "email": "...", "password": "...", "display_name": "..." }
+
+    Behavior:
+      - Upsert by email. If user exists, password_hash is replaced with the new hash.
+      - Returns JSON { created: bool, email, id }.
+    """
+    if not DEV_MODE:
+        return JSONResponse(status_code=404, content={"status": "error", "code": "NOT_FOUND", "message": "Endpoint not available"})
+
+    # Resolve defaults from env
+    default_email = os.getenv("SEED_USER_EMAIL", os.getenv("DEMO_EMAIL", "test@example.com"))
+    default_password = os.getenv("SEED_USER_PASSWORD", os.getenv("DEMO_PASSWORD", "TestPass!123"))
+    default_display = os.getenv("SEED_USER_DISPLAY_NAME", "Test User")
+
+    email = (payload.email if payload and payload.email else default_email).strip()
+    password = (payload.password if payload and payload.password else default_password)
+    display = (payload.display_name if payload and payload.display_name else default_display)
+
+    if not email or not password:
+        return JSONResponse(status_code=422, content={"status": "error", "code": "VALIDATION", "message": "email and password are required"})
+
+    # Upsert user by email
+    user = get_user_by_email(db, email)
+    created = False
+    if not user:
+        user = User(email=email, display_name=display)
+        created = True
+
+    # Always set/replace hashed password
+    user.password_hash = hash_password(password)
+    if created:
+        db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    return JSONResponse(status_code=200, content={"created": created, "email": user.email, "id": user.id})

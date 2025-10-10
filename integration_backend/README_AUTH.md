@@ -50,6 +50,31 @@ Environment vars:
 - CSRF_SECRET (defaults to SECRET_KEY)
 - DEV_MODE, DEMO_EMAIL, DEMO_PASSWORD (bootstrap demo user)
 
+Seeding a test user (DEV only):
+- POST /auth/seed-test-user
+  - Guarded by DEV_MODE=true. Returns 404 when DEV_MODE=false.
+  - Optional body: { "email": "test@example.com", "password": "TestPass!123", "display_name": "Test User" }
+  - Creates or updates the user with a bcrypt-hashed password.
+  - Response: { "created": true|false, "email": "...", "id": n }
+
+Default credentials:
+- Email: test@example.com
+- Password: TestPass!123
+
+Override via environment:
+- SEED_USER_EMAIL (fallback to DEMO_EMAIL or test@example.com)
+- SEED_USER_PASSWORD (fallback to DEMO_PASSWORD or TestPass!123)
+- SEED_USER_DISPLAY_NAME (default "Test User")
+
+Quick verification flow:
+1) Ensure DEV_MODE=true in backend environment.
+2) Call POST /auth/seed-test-user (no body to use defaults).
+3) GET /auth/csrf to obtain CSRF token cookie+value.
+4) POST /login with:
+   { "email": "test@example.com", "password": "TestPass!123" }
+   and header: X-CSRF-Token: <value from /auth/csrf>
+5) On success, use returned JWTs and verify via GET /auth/session.
+
 Notes:
 - This scaffold uses stateless JWTs and a demo refresh flow. For production:
   - Use signed JWTs and persistent refresh token storage with rotation.
