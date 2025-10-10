@@ -1,3 +1,2 @@
-"""
-Routers package. Includes the /connectors aggregator for modular connectors.
-"""
+from . import connectors
+__all__ = ["connectors"]

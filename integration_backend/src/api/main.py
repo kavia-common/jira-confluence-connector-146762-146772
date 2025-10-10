@@ -102,6 +102,7 @@ from src.api.schemas import (
     ConnectResponse,
     JiraProjectsFetchResponse,
     ConfluencePagesFetchResponse,
+    OAuthAuthorizeURL,
 )
 
 # -----------------------
@@ -339,24 +340,18 @@ app = FastAPI(
 # Ensure RequestID is outermost so all logs include it
 app.add_middleware(RequestIDMiddleware)
 
-# CORS: Restrictive allowlist for the running frontend origin; handle preflight automatically.
-# If you need to change this at runtime, set NEXT_PUBLIC_BACKEND_CORS_ORIGINS or backend_cors_origins accordingly.
-# For this environment, we must explicitly allow the Next.js frontend origin on :3000.
-allowed_frontend_origin = "https://vscode-internal-36200-beta.beta01.cloud.kavia.ai:3000"
-
-# If settings specify more origins, merge while ensuring the required one is present.
-from src.api.oauth_config import _SETTINGS as _SETTINGS_INTERNAL  # safe import inside backend
-configured = _SETTINGS_INTERNAL.backend_cors_origins or ""
+# CORS setup
+allowed_frontend_origin = os.getenv("NEXT_PUBLIC_BACKEND_CORS_ORIGINS", "").split(",")[0].strip() or "https://vscode-internal-36200-beta.beta01.cloud.kavia.ai:3000"
+configured = os.getenv("NEXT_PUBLIC_BACKEND_CORS_ORIGINS") or os.getenv("BACKEND_CORS_ORIGINS") or ""
 configured_list = [o.strip() for o in configured.split(",")] if configured else []
-if allowed_frontend_origin not in configured_list:
+if allowed_frontend_origin and allowed_frontend_origin not in configured_list:
     configured_list.append(allowed_frontend_origin)
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=configured_list if configured_list else ["*"],
     allow_credentials=True,
-    # Allow GET for normal fetch and OPTIONS for CORS preflight; include POST for future extensibility
-    allow_methods=["GET", "OPTIONS", "POST"],
+    allow_methods=["GET", "OPTIONS", "POST", "PATCH", "DELETE"],
     allow_headers=["*"],
     expose_headers=["X-Request-ID"],
     max_age=600,
@@ -366,25 +361,21 @@ app.add_middleware(
 Base.metadata.create_all(bind=engine)
 
 # Mount standardized connectors router (Jira/Confluence)
-from src.api.routers.connectors import connectors_router  # noqa: E402
+from src.api.routers import connectors as connectors_router  # noqa: E402
 
-app.include_router(connectors_router)
-
-
-def _ocean_response(data: Any, message: str = "ok") -> Dict[str, Any]:
-    """
-    Wrap responses using a simple 'Ocean Professional' style envelope.
-
-    This keeps API responses consistent across endpoints.
-    """
-    return {"status": "success", "message": message, "data": data}
-
+app.include_router(connectors_router.router)
 
 # Global unhandled exception handler
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     """Capture any unhandled exception, log it, and return a sanitized 500 with request_id."""
     rid = getattr(request.state, "request_id", None)
+    # If this is already a standardized error payload, pass through
+    detail = getattr(exc, "detail", None)
+    status_code = getattr(exc, "status_code", 500)
+    if isinstance(detail, dict) and detail.get("status") == "error":
+        return JSONResponse(status_code=status_code, content=detail)
+
     _log_event(logging.ERROR, "unhandled_exception", request, status_code=500, error=str(exc))
     APP_LOGGER.exception("Unhandled exception", extra={
         "request_id": rid,
@@ -394,8 +385,17 @@ async def global_exception_handler(request: Request, exc: Exception):
     })
     return JSONResponse(
         status_code=500,
-        content={"status": "error", "message": "Internal Server Error", "request_id": rid},
+        content={"status": "error", "code": "INTERNAL_ERROR", "message": "Internal Server Error", "request_id": rid},
     )
+
+
+def _ocean_response(data: Any, message: str = "ok") -> Dict[str, Any]:
+    """
+    Wrap responses using a simple 'Ocean Professional' style envelope.
+
+    This keeps API responses consistent across endpoints.
+    """
+    return {"status": "success", "message": message, "data": data}
 
 
 # PUBLIC_INTERFACE
@@ -528,8 +528,6 @@ def jira_login_options():
     return JSONResponse(status_code=200, content={})
 
 # PUBLIC_INTERFACE
-from src.api.schemas import OAuthAuthorizeURL  # at top if not already imported
-
 @app.get(
     "/auth/jira/login",
     tags=["Auth"],
@@ -576,10 +574,7 @@ def jira_login(
         cfg = get_jira_oauth_config()
         client_id = (cfg.get("client_id") or "").strip()
         client_secret = (cfg.get("client_secret") or "").strip()
-        # Build redirect_uri with strict priority:
-        # 1) explicit env JIRA_REDIRECT_URI
-        # 2) request-aware builder (X-Forwarded-Proto/Host + url_for('jira_callback'))
-        # 3) final fallback fixed host
+        # Build redirect_uri with strict priority: env var JIRA_REDIRECT_URI
         app_env = (cfg.get("app_env") or "production").lower()
         dev_mode = str(cfg.get("dev_mode") or "").lower() in ("true", "1", "yes")
 
@@ -598,7 +593,7 @@ def jira_login(
             _log_event(logging.WARNING, "oauth_redirect_uri_builder_exception", request, provider=provider, error=str(e))
             redirect_uri = ""
 
-        # Presence flags and derived missing map (True means the field is missing)
+        # Presence flags
         presence = {
             "client_id_present": bool(client_id),
             "client_secret_present": bool(client_secret),
@@ -606,7 +601,6 @@ def jira_login(
         }
         missing = {k.replace("_present", ""): not v for k, v in presence.items()}
 
-        # Prepare masked, source-aware debug details (do not log raw values)
         env_debug = get_jira_oauth_env_debug()
 
         if any(missing.values()):
@@ -618,7 +612,6 @@ def jira_login(
             if missing.get("redirect_uri"):
                 reasons.append("redirect_uri not set or empty")
 
-            # In dev, return a mock URL to keep UX flowing while surfacing misconfig
             if dev_mode or app_env == "development":
                 mock_url = "https://auth.atlassian.com/authorize?mock=true"
                 _log_event(
@@ -631,7 +624,6 @@ def jira_login(
                     env_debug=env_debug,
                     reasons=reasons,
                 )
-                # Even if redirect=true is requested, we keep the safe mock JSON behavior in dev to avoid surprise navigation.
                 return JSONResponse(
                     status_code=200,
                     content={
@@ -690,31 +682,14 @@ def jira_login(
         # Non-blocking analysis for observability
         redirect_analysis = env_debug["redirect_uri"].get("analysis", {})
 
-        # Emit an explicit probe log of the resolved redirect_uri for observability
-        _log_event(
-            logging.INFO,
-            "oauth_resolved_redirect_probe",
-            request,
-            provider=provider,
-            resolved_redirect_uri=redirect_uri,
-            resolved_redirect_uri_analysis=redirect_analysis,
-        )
-
         # Build CSRF state and set it as signed cookie; include in authorize URL.
         csrf_raw = _gen_csrf_state()
         signed_csrf = _sign_state(csrf_raw)
-
-        # Persist signed state in cookie for later verification
-        # We will store only the signed token; keep HTTP-only to prevent JS access.
-        # Ten-minute TTL; SameSite=Lax is OK for OAuth redirections.
         state_cookie_value = signed_csrf
 
-        # Compose compound state placed on the authorize URL:
-        # { "csrf": "<signed_csrf>", "client": "<optional client-provided>", "tenant_id": "default" }
         compound_state_obj = {"csrf": signed_csrf}
         if state:
             compound_state_obj["client"] = state
-        # Optional: pass a tenant hint if any header set later (not required here)
         compound_state = json.dumps(compound_state_obj, separators=(",", ":"))
 
         url = build_atlassian_authorize_url(
@@ -724,7 +699,6 @@ def jira_login(
             state=compound_state,
         )
 
-        # Short debug log printing the final redirect used and full URL for verification
         _log_event(
             logging.INFO,
             "oauth_final_redirect_uri_debug",
@@ -761,12 +735,9 @@ def jira_login(
             chosen_mode=("http_redirect" if redirect else "json_url"),
         )
 
-        # If redirect=true -> issue HTTP 307 with no-store cache policy; else return JSON
         if redirect:
             response = RedirectResponse(url=url, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
-            # Prevent browser/proxy caching of the redirect response
             response.headers["Cache-Control"] = "no-store"
-            # Set state cookie
             response.set_cookie(
                 key=_STATE_COOKIE_NAME,
                 value=state_cookie_value,
@@ -779,29 +750,6 @@ def jira_login(
             _log_event(logging.INFO, "oauth_state_cookie_set", request, provider=provider, cookie=_STATE_COOKIE_NAME, mode="redirect")
             return response
 
-        # Return 200 with the URL for clients to navigate and log it for verification
-        _log_event(
-            logging.INFO,
-            "oauth_authorize_url_echo",
-            request,
-            provider=provider,
-            authorize_url=url,
-        )
-        # Sanity check: ensure redirect_uri appears exactly as encoded in the URL
-        try:
-            encoded_ri = urllib.parse.quote(redirect_uri, safe="")
-            has_redirect_param = f"redirect_uri={encoded_ri}" in url
-            _log_event(
-                logging.INFO,
-                "oauth_authorize_url_sanity",
-                request,
-                provider=provider,
-                contains_expected_redirect_uri=has_redirect_param,
-                expected_redirect_uri_encoded=encoded_ri,
-            )
-        except Exception:
-            # Non-fatal; proceed
-            pass
         # JSON flow: also set the cookie so the browser carries it to callback after navigation
         response = JSONResponse(status_code=200, content={"url": url})
         response.set_cookie(
@@ -1434,9 +1382,6 @@ def connect_jira(db=Depends(get_db), payload: UserCreate | None = None):
     Returns:
         ConnectResponse summary of saved settings including optional redirect_url.
     """
-    # Lazy import to avoid circulars and keep dependency surface small
-    # Removed legacy import of hardcoded credentials; OAuth flow is used instead.
-
     # This demo endpoint no longer persists tokens directly. It guides the client to start OAuth.
     from src.api.oauth_config import get_atlassian_base_url
     base_url = get_atlassian_base_url()
@@ -1490,8 +1435,6 @@ def connect_confluence(db=Depends(get_db), payload: UserCreate | None = None):
     Returns:
         ConnectResponse summary of saved settings including optional redirect_url.
     """
-    # Removed legacy import of hardcoded credentials; OAuth flow is used instead.
-
     from src.api.oauth_config import get_atlassian_base_url
     base_core = get_atlassian_base_url()
     base_url = (base_core.rstrip("/") + "/wiki") if base_core else None

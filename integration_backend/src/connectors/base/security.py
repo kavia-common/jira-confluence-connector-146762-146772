@@ -1,4 +1,7 @@
-from __future__ import annotations
-
-# This module may be extended later with common security helpers (signing, encryption).
-# Keeping placeholder for backwards compatibility if imports reference it.
+def mask_secret(value: str, keep: int = 4) -> str:
+    """Mask secret preserving last 'keep' chars."""
+    if not value:
+        return value
+    if len(value) <= keep:
+        return "*" * len(value)
+    return "*" * (len(value) - keep) + value[-keep:]

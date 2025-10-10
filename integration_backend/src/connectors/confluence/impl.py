@@ -1,184 +1,91 @@
-from __future__ import annotations
-
-import time
-import json
+import logging
 from typing import Any, Dict, List, Optional
+import requests
 
-import httpx
-from fastapi import HTTPException, status
+logger = logging.getLogger(__name__)
 
-from src.connectors.base.base_connector import BaseConnector
-from src.connectors.base.models import SearchResultItem, CreateResult, ConnectionStatus
-from src.db.token_store import save_tokens_db_aware as save_tokens, get_tokens_db_aware as get_tokens, get_token_record
-from src.api.oauth_config import get_confluence_oauth_config, build_atlassian_authorize_url
+class ConfluenceClientError(Exception):
+    def __init__(self, message: str, status: Optional[int] = None, retry_after: Optional[int] = None):
+        super().__init__(message)
+        self.status = status
+        self.retry_after = retry_after
 
 
-class ConfluenceConnector(BaseConnector):
-    """Confluence connector implementation using Atlassian OAuth 2.0."""
+class ConfluenceClient:
+    """Minimal Confluence client used for list/search/create with normalized results."""
+    def __init__(self, access_token: Optional[str], refresh_token: Optional[str], expires_at: Optional[int], base_url: Optional[str], timeout: int = 20):
+        self.access_token = access_token
+        self.refresh_token = refresh_token
+        self.expires_at = expires_at
+        self.base_url = base_url or ""
+        self.timeout = timeout
 
-    connector_id: str = "confluence"
+    def _headers(self) -> Dict[str, str]:
+        headers = {"Accept": "application/json"}
+        if self.access_token:
+            headers["Authorization"] = f"Bearer {self.access_token}"
+        return headers
 
-    def _default_scopes(self) -> str:
-        return "read:confluence-content.all read:confluence-space.summary offline_access"
-
-    def oauth_authorize_url(
-        self, tenant_id: str, state: Optional[str] = None, scopes: Optional[str] = None
-    ) -> str:
-        cfg = get_confluence_oauth_config()
-        client_id = cfg.get("client_id") or ""
-        redirect_uri = cfg.get("redirect_uri") or ""
-        scopes = scopes or self._default_scopes()
-
-        compound_state: Optional[str] = None
-        if state:
+    def _handle(self, resp: requests.Response) -> Dict[str, Any]:
+        if resp.status_code >= 400:
+            retry_after = None
+            if resp.status_code == 429:
+                ra = resp.headers.get("Retry-After")
+                try:
+                    retry_after = int(ra) if ra else None
+                except Exception:
+                    retry_after = None
             try:
-                compound_state = json.dumps({"tenant_id": tenant_id, "state": state}, separators=(",", ":"))
+                data = resp.json()
             except Exception:
-                compound_state = state
-        else:
-            compound_state = json.dumps({"tenant_id": tenant_id}, separators=(",", ":"))
+                data = {"error": resp.text}
+            raise ConfluenceClientError(str(data), status=resp.status_code, retry_after=retry_after)
+        try:
+            return resp.json()
+        except Exception:
+            return {}
 
-        return build_atlassian_authorize_url(
-            client_id=client_id, redirect_uri=redirect_uri, scopes=scopes, state=compound_state
-        )
+    def list_spaces(self, limit: int = 25, cursor: Optional[str] = None) -> Dict[str, Any]:
+        # Minimal: if no base_url available, return empty stub
+        if not self.base_url:
+            return {"items": []}
+        params = {"limit": limit}
+        if cursor:
+            params["cursor"] = cursor
+        url = f"{self.base_url}/wiki/api/v2/spaces"
+        resp = requests.get(url, headers=self._headers(), params=params, timeout=self.timeout)
+        data = self._handle(resp)
+        items = []
+        for s in data.get("results", []):
+            items.append({"id": s.get("id"), "key": s.get("key"), "name": s.get("name")})
+        return {"items": items, "next_cursor": data.get("cursor")}
 
-    def oauth_callback(
-        self, code: str, tenant_id: str, state: Optional[str] = None
-    ) -> ConnectionStatus:
-        cfg = get_confluence_oauth_config()
-        client_id = cfg.get("client_id")
-        client_secret = cfg.get("client_secret")
-        redirect_uri = cfg.get("redirect_uri")
-        if not client_id or not client_secret or not redirect_uri:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Confluence OAuth is not configured.",
-            )
-
-        token_url = "https://auth.atlassian.com/oauth/token"
-        data = {
-            "grant_type": "authorization_code",
-            "client_id": client_id,
-            "client_secret": client_secret,
-            "code": code,
-            "redirect_uri": redirect_uri,
-        }
-        with httpx.Client(timeout=20.0) as client:
-            resp = client.post(token_url, json=data, headers={"Content-Type": "application/json"})
-        if resp.status_code != 200:
-            raise HTTPException(status_code=502, detail="Token exchange failed")
-        tj = resp.json()
-        scopes = tj.get("scope", None)
-        expires_in = int(tj.get("expires_in") or 0)
-        expires_at = int(time.time()) + expires_in if expires_in > 0 else None
-
-        save_tokens(
-            db=self._db,  # type: ignore[attr-defined]
-            connector_id=self.connector_id,
-            tenant_id=tenant_id,
-            tokens={"access_token": tj.get("access_token"), "refresh_token": tj.get("refresh_token")},
-            scopes=scopes,
-            expires_at=expires_at,
-            metadata={"token_type": tj.get("token_type")},
-        )
-        granted_scopes = (scopes.split() if isinstance(scopes, str) and scopes else None)
-        return ConnectionStatus(connected=True, scopes=granted_scopes, expires_at=expires_at)
-
-    def connection_status(self, tenant_id: str) -> ConnectionStatus:
-        rec = get_token_record(self._db, self.connector_id, tenant_id)  # type: ignore[attr-defined]
-        if not rec:
-            return ConnectionStatus(connected=False, scopes=None, expires_at=None)
-        scopes = rec.scopes.split() if rec.scopes else None
-        return ConnectionStatus(connected=True, scopes=scopes, expires_at=rec.expires_at, error=rec.last_error)
-
-    def refresh_token_if_needed(self, tenant_id: str) -> ConnectionStatus:
-        rec = get_token_record(self._db, self.connector_id, tenant_id)  # type: ignore[attr-defined]
-        if not rec:
-            return ConnectionStatus(connected=False, scopes=None, expires_at=None)
-        now = int(time.time())
-        safe_window = 120
-        if rec.expires_at and rec.expires_at - now > safe_window:
-            scopes = rec.scopes.split() if rec.scopes else None
-            return ConnectionStatus(connected=True, scopes=scopes, expires_at=rec.expires_at)
-
-        cfg = get_confluence_oauth_config()
-        client_id = cfg.get("client_id")
-        client_secret = cfg.get("client_secret")
-        if not client_id or not client_secret:
-            return ConnectionStatus(connected=False, scopes=None, expires_at=rec.expires_at, error="oauth_config_missing")
-
-        tokens = get_tokens(self._db, self.connector_id, tenant_id)  # type: ignore[attr-defined]
-        if not tokens or not tokens.get("refresh_token"):
-            return ConnectionStatus(connected=False, scopes=None, expires_at=rec.expires_at, error="no_refresh_token")
-
-        with httpx.Client(timeout=20.0) as client:
-            r = client.post(
-                "https://auth.atlassian.com/oauth/token",
-                json={
-                    "grant_type": "refresh_token",
-                    "client_id": client_id,
-                    "client_secret": client_secret,
-                    "refresh_token": tokens.get("refresh_token"),
-                },
-                headers={"Content-Type": "application/json"},
-            )
-        if r.status_code != 200:
-            return ConnectionStatus(connected=False, scopes=None, expires_at=rec.expires_at, error="refresh_failed")
-        tj = r.json()
-        scopes = tj.get("scope", rec.scopes)
-        expires_in = int(tj.get("expires_in") or 0)
-        expires_at = int(time.time()) + expires_in if expires_in > 0 else None
-        save_tokens(
-            db=self._db,  # type: ignore[attr-defined]
-            connector_id=self.connector_id,
-            tenant_id=tenant_id,
-            tokens={"access_token": tj.get("access_token"), "refresh_token": tj.get("refresh_token")},
-            scopes=scopes,
-            expires_at=expires_at,
-        )
-        return ConnectionStatus(
-            connected=True,
-            scopes=scopes.split() if isinstance(scopes, str) else None,
-            expires_at=expires_at,
-        )
-
-    def search(
-        self, query: str, tenant_id: str, limit: int = 10, filters: Optional[Dict[str, Any]] = None
-    ) -> List[SearchResultItem]:
-        items: List[SearchResultItem] = []
-        for i in range(min(max(limit, 1), 25)):
+    def search(self, q: str, limit: int = 10) -> List[Dict[str, Any]]:
+        if not self.base_url:
+            return []
+        params = {"query": q, "limit": limit}
+        url = f"{self.base_url}/wiki/api/v2/pages/search"
+        resp = requests.get(url, headers=self._headers(), params=params, timeout=self.timeout)
+        data = self._handle(resp)
+        items: List[Dict[str, Any]] = []
+        for page in data.get("results", []):
             items.append(
-                SearchResultItem(
-                    id=f"PAGE-{i}",
-                    title=f"Confluence page matching '{query}' #{i}",
-                    url="https://example.atlassian.net/wiki/spaces/SPACE/pages/123",
-                    type="page",
-                    snippet="Stubbed result. Connect to fetch real pages.",
-                    metadata={"tenant_id": tenant_id, "filters": filters or {}},
-                )
+                {
+                    "id": str(page.get("id")),
+                    "title": page.get("title") or "",
+                    "url": f"{self.base_url}/wiki/spaces/{(page.get('space') or {}).get('key')}/pages/{page.get('id')}",
+                    "type": "page",
+                    "icon": None,
+                    "snippet": None,
+                    "metadata": {"space": (page.get("space") or {}).get("key")},
+                }
             )
         return items
 
-    def create(self, payload: Dict[str, Any], tenant_id: str) -> CreateResult:
-        # For now, require connection but return stub
-        tokens = get_tokens(self._db, self.connector_id, tenant_id)  # type: ignore[attr-defined]
-        if not tokens or not tokens.get("access_token"):
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Connector not connected for tenant")
-        return CreateResult(
-            id="PAGE-12345",
-            url="https://example.atlassian.net/wiki/spaces/SPACE/pages/12345",
-            title=payload.get("title") or "Demo Created Page",
-            metadata={"tenant_id": tenant_id, "payload": payload},
-        )
-
-    def get_resource(self, key: str, tenant_id: str) -> Dict[str, Any]:
-        return {
-            "id": key,
-            "title": f"Confluence resource {key}",
-            "url": f"https://example.atlassian.net/wiki/spaces/SPACE/pages/{key}",
-            "metadata": {"tenant_id": tenant_id},
-        }
-
-    def with_db(self, db) -> "ConfluenceConnector":
-        self._db = db  # type: ignore[attr-defined]
-        return self
+    def create(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        if not self.base_url:
+            raise ConfluenceClientError("Confluence base_url not set", status=400)
+        url = f"{self.base_url}/wiki/api/v2/pages"
+        resp = requests.post(url, headers=self._headers(), json=payload, timeout=self.timeout)
+        data = self._handle(resp)
+        return {"id": str(data.get("id")), "url": data.get("url"), "title": data.get("title"), "metadata": data}

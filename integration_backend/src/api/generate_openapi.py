@@ -1,15 +1,22 @@
-import json
-import os
+from fastapi import FastAPI
 
-from src.api.main import app
-
-# Get the OpenAPI schema
-openapi_schema = app.openapi()
-
-# Write to file
-output_dir = "interfaces"
-os.makedirs(output_dir, exist_ok=True)
-output_path = os.path.join(output_dir, "openapi.json")
-
-with open(output_path, "w") as f:
-    json.dump(openapi_schema, f, indent=2)
+# PUBLIC_INTERFACE
+def generate_openapi_schema(app: FastAPI):
+    """Return FastAPI-generated OpenAPI; hooks for post-processing can be added here."""
+    schema = app.openapi()
+    # Ensure ErrorResponse exists in components for standardized errors
+    components = schema.setdefault("components", {}).setdefault("schemas", {})
+    if "ErrorResponse" not in components:
+        components["ErrorResponse"] = {
+            "title": "ErrorResponse",
+            "type": "object",
+            "properties": {
+                "status": {"type": "string"},
+                "code": {"type": "string"},
+                "message": {"type": "string"},
+                "retry_after": {"type": ["integer", "null"]},
+                "details": {"type": ["object", "null"], "additionalProperties": True},
+            },
+            "required": ["status", "code", "message"],
+        }
+    return schema

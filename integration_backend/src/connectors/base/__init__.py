@@ -1,3 +1,1 @@
-"""
-Base definitions for connector architecture (interfaces, DTOs, security helpers).
-"""
+# Base connector utilities and interfaces
