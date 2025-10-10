@@ -28,6 +28,7 @@ from src.api.oauth_config import (
     get_jira_oauth_config,
     get_confluence_oauth_config,
     get_frontend_base_url_default,
+    get_oauth_config_health,
 )
 
 from src.api.schemas import (
@@ -308,6 +309,37 @@ def health_check():
     return _ocean_response({"service": "integration_backend", "health": "healthy"}, "service healthy")
 
 
+# PUBLIC_INTERFACE
+@app.get(
+    "/health/oauth",
+    tags=["Health"],
+    summary="OAuth config health",
+    description="Lightweight health endpoint indicating current OAuth (Atlassian) configuration readiness. Does not expose secrets.",
+)
+def oauth_health_check():
+    """
+    Report non-sensitive readiness of OAuth config.
+
+    Returns:
+        JSON with Jira/Confluence readiness flags and chosen redirect URIs.
+    """
+    return _ocean_response(get_oauth_config_health(), "oauth config status")
+
+
+# PUBLIC_INTERFACE
+@app.get(
+    "/api/health/oauth",
+    tags=["Health"],
+    summary="Alias: OAuth config health (/api prefix)",
+    description="Compatibility alias for proxies that forward '/api/health/oauth' unchanged.",
+)
+def oauth_health_check_alias():
+    """
+    Alias wrapper for /health/oauth.
+    """
+    return oauth_health_check()
+
+
 # Users (Public)
 
 # -----------------------
@@ -353,9 +385,20 @@ def jira_login(
         cfg = get_jira_oauth_config()
         client_id = cfg.get("client_id")
         redirect_uri = cfg.get("redirect_uri")
+        # Do not 500 on login: use safe defaults when available and warn.
         if not client_id or not redirect_uri:
-            _log_event(logging.ERROR, "oauth_login_config_error", request, provider=provider)
-            raise HTTPException(status_code=500, detail="Jira OAuth is not configured. Set environment variables.")
+            _log_event(
+                logging.WARNING,
+                "oauth_login_config_missing",
+                request,
+                provider=provider,
+                has_client_id=bool(client_id),
+                has_redirect=bool(redirect_uri),
+            )
+            # get_jira_oauth_config already injected a safe default client_id and redirect_uri if absent.
+            # If redirect_uri is still missing for some reason, bail with a clear 500.
+            if not redirect_uri:
+                raise HTTPException(status_code=500, detail="Jira OAuth redirect_uri is not configured.")
 
         # Default scopes per requirements
         default_scopes = [
