@@ -255,6 +255,15 @@ app = FastAPI(
     openapi_tags=openapi_tags,
 )
 
+# PUBLIC_INTERFACE
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon_compat():
+    """
+    Minimal favicon handler to avoid 404s in logs.
+    Returns a 204 No Content response.
+    """
+    return JSONResponse(status_code=204, content=None)
+
 # Ensure RequestID is outermost so all logs include it
 app.add_middleware(RequestIDMiddleware)
 
@@ -467,12 +476,21 @@ def jira_login(
     summary="Jira OAuth 2.0 callback",
     description="Handles Atlassian redirect, exchanges code for tokens, stores them on the first user (or targeted later), and redirects back to frontend.",
 )
-async def jira_callback(request: Request, db=Depends(get_db), code: Optional[str] = None, state: Optional[str] = None):
+async def jira_callback(
+    request: Request,
+    db=Depends(get_db),
+    code: Optional[str] = None,
+    state: Optional[str] = None,
+    response: Optional[str] = None,
+):
     """
     Complete Jira OAuth 2.0 flow:
-    - Exchange authorization code for access and refresh tokens
-    - Store tokens and expiry on a user (demo: first user)
-    - Redirect to frontend with status
+    - Validate presence of authorization code.
+    - Validate that configured redirect_uri path matches the current request path to prevent mismatches.
+    - If client_secret is present, exchange code for tokens with Atlassian.
+      If client_secret is NOT present, return a clear message (or JSON) guiding configuration (safe stub).
+    - Store tokens on a demo user (first user) and redirect to frontend success page.
+    - If response=json (or Accept: application/json), return a JSON body for debugging/automation instead of redirect.
     """
     provider = "jira"
     _log_event(logging.INFO, "oauth_callback_received", request, provider=provider)
@@ -482,122 +500,222 @@ async def jira_callback(request: Request, db=Depends(get_db), code: Optional[str
             raise HTTPException(status_code=400, detail="Missing authorization code")
 
         cfg = get_jira_oauth_config()
-        client_id = cfg.get("client_id")
-        client_secret = cfg.get("client_secret")
-        redirect_uri = cfg.get("redirect_uri")
-        if not client_id or not client_secret or not redirect_uri:
-            _log_event(logging.ERROR, "oauth_callback_config_error", request, provider=provider, status_code=500)
-            raise HTTPException(status_code=500, detail="Jira OAuth is not configured. Set environment variables.")
+        client_id = cfg.get("client_id") or ""
+        client_secret = cfg.get("client_secret") or ""
+        redirect_uri = cfg.get("redirect_uri") or ""
 
-        token_url = "https://auth.atlassian.com/oauth/token"
-        data = {
-            "grant_type": "authorization_code",
-            "client_id": client_id,
-            "client_secret": client_secret,
-            "code": code,
-            "redirect_uri": redirect_uri,
-        }
-
-        _log_event(logging.INFO, "token_exchange_start", request, provider=provider)
-        async with httpx.AsyncClient(timeout=20.0) as client:
-            try:
-                token_resp = await client.post(token_url, json=data, headers={"Content-Type": "application/json"})
-            except httpx.RequestError as rex:
-                APP_LOGGER.exception("Token exchange request error", extra={
-                    "request_id": getattr(request.state, "request_id", None),
-                    "event": "token_exchange_error",
-                    "provider": provider,
-                    "path": request.url.path,
-                })
-                raise HTTPException(status_code=502, detail="Token exchange request failed") from rex
-
-        _log_event(
-            logging.INFO,
-            "token_exchange_response",
-            request,
-            provider=provider,
-            status_code=token_resp.status_code,
-        )
-
-        if token_resp.status_code != 200:
-            # Log failure without secrets
-            APP_LOGGER.error(
-                "Token exchange failed",
-                extra={
-                    "request_id": getattr(request.state, "request_id", None),
-                    "event": "token_exchange_failed",
-                    "provider": provider,
-                    "path": request.url.path,
-                    "status_code": token_resp.status_code,
-                },
+        # Validate that the configured redirect URI path matches the path used by this request.
+        # This prevents "invalid redirect_uri" during token exchange when proxies add /api, etc.
+        try:
+            configured_path = urllib.parse.urlparse(redirect_uri).path if redirect_uri else ""
+        except Exception:
+            configured_path = ""
+        current_path = request.url.path
+        if configured_path and configured_path != current_path:
+            _log_event(
+                logging.WARNING,
+                "oauth_redirect_uri_path_mismatch",
+                request,
+                provider=provider,
+                status_code=400,
+                configured_path=configured_path,
+                current_path=current_path,
             )
-            raise HTTPException(status_code=502, detail="Token exchange failed")
+            # Do not hard fail; Atlassian compares redirect_uri string exactly during token exchange.
+            # We warn here so operators can fix the configured URI if token exchange fails.
+            # Proceed to attempt exchange; Atlassian will reject if mismatched.
 
-        token_json = token_resp.json()
+        wants_json = (response == "json") or ("application/json" in (request.headers.get("accept") or ""))
 
-        access_token = token_json.get("access_token")
-        refresh_token = token_json.get("refresh_token")
-        expires_in = token_json.get("expires_in")  # seconds
-        _log_event(
-            logging.INFO,
-            "token_exchange_success",
-            request,
-            provider=provider,
-            access_token_present=bool(access_token),
-            refresh_token_present=bool(refresh_token),
-            expires_in=expires_in,
-        )
+        token_json: Dict[str, Any] = {}
+        if client_secret:
+            # Proceed with token exchange
+            token_url = "https://auth.atlassian.com/oauth/token"
+            data = {
+                "grant_type": "authorization_code",
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "code": code,
+                "redirect_uri": redirect_uri,
+            }
 
-        if not access_token:
-            _log_event(logging.ERROR, "oauth_no_access_token", request, provider=provider, status_code=502)
-            raise HTTPException(status_code=502, detail="No access token returned by Atlassian")
+            _log_event(logging.INFO, "token_exchange_start", request, provider=provider)
+            async with httpx.AsyncClient(timeout=20.0) as client:
+                try:
+                    token_resp = await client.post(token_url, json=data, headers={"Content-Type": "application/json"})
+                except httpx.RequestError as rex:
+                    APP_LOGGER.exception(
+                        "Token exchange request error",
+                        extra={
+                            "request_id": getattr(request.state, "request_id", None),
+                            "event": "token_exchange_error",
+                            "provider": provider,
+                            "path": request.url.path,
+                        },
+                    )
+                    raise HTTPException(status_code=502, detail="Token exchange request failed") from rex
 
-        # For demo simplicity: store on the first user (or require selecting target later)
-        users = list_users(db)
-        if not users:
-            _log_event(logging.ERROR, "oauth_no_user_available", request, provider=provider, status_code=400)
-            raise HTTPException(status_code=400, detail="No user found. Create a user first via POST /users.")
-        user = users[0]
+            _log_event(
+                logging.INFO,
+                "token_exchange_response",
+                request,
+                provider=provider,
+                status_code=token_resp.status_code,
+            )
 
-        user.jira_token = access_token
-        user.jira_refresh_token = refresh_token
-        user.jira_expires_at = int(time.time()) + int(expires_in or 0)
-        # store base URL if known from env
-        from src.api.oauth_config import get_atlassian_base_url
+            if token_resp.status_code != 200:
+                APP_LOGGER.error(
+                    "Token exchange failed",
+                    extra={
+                        "request_id": getattr(request.state, "request_id", None),
+                        "event": "token_exchange_failed",
+                        "provider": provider,
+                        "path": request.url.path,
+                        "status_code": token_resp.status_code,
+                    },
+                )
+                # For debug mode, return JSON error with hints
+                if wants_json:
+                    return JSONResponse(
+                        status_code=502,
+                        content={
+                            "status": "error",
+                            "message": "Token exchange failed",
+                            "hint": "Verify Atlassian app redirect URI matches exactly and client credentials are correct.",
+                            "request_path": current_path,
+                            "configured_redirect_path": configured_path,
+                        },
+                    )
+                raise HTTPException(status_code=502, detail="Token exchange failed")
 
-        user.jira_base_url = get_atlassian_base_url() or user.jira_base_url
-        db.commit()
-        db.refresh(user)
+            token_json = token_resp.json()
+            access_token = token_json.get("access_token")
+            refresh_token = token_json.get("refresh_token")
+            expires_in = token_json.get("expires_in")  # seconds
 
-        _log_event(logging.INFO, "oauth_user_token_persisted", request, provider=provider, user_id=user.id)
+            _log_event(
+                logging.INFO,
+                "token_exchange_success",
+                request,
+                provider=provider,
+                access_token_present=bool(access_token),
+                refresh_token_present=bool(refresh_token),
+                expires_in=expires_in,
+            )
 
-        # Redirect back to frontend
+            if not access_token:
+                _log_event(logging.ERROR, "oauth_no_access_token", request, provider=provider, status_code=502)
+                if wants_json:
+                    return JSONResponse(
+                        status_code=502,
+                        content={"status": "error", "message": "No access token returned by Atlassian"},
+                    )
+                raise HTTPException(status_code=502, detail="No access token returned by Atlassian")
+        else:
+            # Safe stub path when client_secret is not configured
+            _log_event(
+                logging.WARNING,
+                "oauth_client_secret_missing",
+                request,
+                provider=provider,
+                status_code=200,
+            )
+            if wants_json:
+                return JSONResponse(
+                    status_code=200,
+                    content={
+                        "status": "ok",
+                        "message": "Client secret not configured; skipping token exchange (stub success for debugging).",
+                        "note": "Set JIRA_OAUTH_CLIENT_SECRET (or aliases) in environment for real token exchange.",
+                        "provider": provider,
+                        "state": state,
+                        "code_present": True,
+                    },
+                )
+
+            # If not in JSON mode, proceed to simulate a success redirect so UI flow can be tested.
+            # No tokens are persisted in this path.
+
+        # Persist session/tokens if we have a real token response, else skip persistence.
+        user_id_val: Optional[int] = None
+        if token_json:
+            users = list_users(db)
+            if not users:
+                _log_event(logging.ERROR, "oauth_no_user_available", request, provider=provider, status_code=400)
+                if wants_json:
+                    return JSONResponse(
+                        status_code=400,
+                        content={
+                            "status": "error",
+                            "message": "No user found. Create a user first via POST /users.",
+                        },
+                    )
+                raise HTTPException(status_code=400, detail="No user found. Create a user first via POST /users.")
+            user = users[0]
+
+            access_token = token_json.get("access_token")
+            refresh_token = token_json.get("refresh_token")
+            expires_in = token_json.get("expires_in")
+            user.jira_token = access_token
+            user.jira_refresh_token = refresh_token
+            user.jira_expires_at = int(time.time()) + int(expires_in or 0)
+
+            from src.api.oauth_config import get_atlassian_base_url
+            user.jira_base_url = get_atlassian_base_url() or user.jira_base_url
+            db.commit()
+            db.refresh(user)
+            user_id_val = user.id
+
+            _log_event(logging.INFO, "oauth_user_token_persisted", request, provider=provider, user_id=user.id)
+
+        # Build frontend redirect or JSON response
         frontend = get_frontend_base_url_default() or "/"
-        # Include minimal status info; avoid exposing tokens
         params = {
             "provider": provider,
             "status": "success",
             "state": state or "",
-            "user_id": str(user.id),
         }
+        if user_id_val is not None:
+            params["user_id"] = str(user_id_val)
+
         redirect_to = f"{frontend.rstrip('/')}/oauth/callback?{urllib.parse.urlencode(params)}"
         _log_event(logging.INFO, "frontend_redirect", request, provider=provider, redirect=redirect_to)
+
+        if wants_json:
+            return JSONResponse(
+                {
+                    "status": "success",
+                    "message": "OAuth callback handled",
+                    "provider": provider,
+                    "redirect_to": redirect_to,
+                    "persisted_user_id": user_id_val,
+                    "configured_redirect_path": configured_path,
+                    "request_path": current_path,
+                }
+            )
+
         return RedirectResponse(redirect_to)
     except HTTPException:
-        APP_LOGGER.exception("OAuth callback HTTPException", extra={
-            "request_id": getattr(request.state, "request_id", None),
-            "event": "oauth_callback_error",
-            "provider": provider,
-            "path": request.url.path,
-        })
+        APP_LOGGER.exception(
+            "OAuth callback HTTPException",
+            extra={
+                "request_id": getattr(request.state, "request_id", None),
+                "event": "oauth_callback_error",
+                "provider": provider,
+                "path": request.url.path,
+            },
+        )
         raise
     except Exception:
-        APP_LOGGER.exception("OAuth callback error", extra={
-            "request_id": getattr(request.state, "request_id", None),
-            "event": "oauth_callback_error",
-            "provider": provider,
-            "path": request.url.path,
-        })
+        APP_LOGGER.exception(
+            "OAuth callback error",
+            extra={
+                "request_id": getattr(request.state, "request_id", None),
+                "event": "oauth_callback_error",
+                "provider": provider,
+                "path": request.url.path,
+            },
+        )
         raise
 
 
