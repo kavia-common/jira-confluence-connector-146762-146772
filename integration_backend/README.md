@@ -6,21 +6,26 @@ Quick start:
 1) python -m venv .venv && source .venv/bin/activate
 2) pip install -r requirements.txt
 3) (optional) cp .env.example .env and fill values; for startup, no secrets are required
-4) Start the server (choose one):
-   - python dev_server.py
-   - uvicorn src.api.main:app --host 0.0.0.0 --port 3001
+
+Start the server (recommended; ensures imports resolve from any working directory):
+- python -m integration_backend.app_entrypoint
+
+Alternate (when working directory is integration_backend and PYTHONPATH includes ./src):
+- python dev_server.py
+- uvicorn src.api.main:app --host 0.0.0.0 --port 3001
 
 Important:
 - Uvicorn app import path is src.api.main:app (NOT main:app).
 - The API listens on port 3001. Check readiness via:
   - GET http://localhost:3001/healthz -> {"status":"ok"}
+  - GET http://localhost:3001/health -> {"status":"ok"}
   - GET http://localhost:3001/docs -> Swagger UI
 
 Server:
 - Boots on port 3001
 - OpenAPI: /openapi.json
 - Docs: /docs
-- Health: /healthz and / (detailed)
+- Health: /healthz, /health, and / (detailed)
 
 CORS:
 - Configure via BACKEND_CORS_ORIGINS or NEXT_PUBLIC_BACKEND_CORS_ORIGINS (comma-separated). Defaults to "*".
@@ -35,12 +40,13 @@ OAuth (Jira):
   - Requires 'state' param and matching signed cookie; returns 422 when missing/invalid (clear message)
   - Requires 'code' param; returns 400 when missing
   - On success, exchanges tokens and redirects to return_url, or FRONTEND_URL/login (connected=jira)
-- /auth/health helpers:
-  - /health/authorize-url -> returns authorize URL without redirect
-  - /health/redirect-uri -> shows active redirect URIs
+
+Health helpers:
+- /health/authorize-url -> returns authorize URL without redirect
+- /health/redirect-uri -> shows active redirect URIs
 
 Confluence:
-- Similar routes exist under connectors/confluence (limited features).
+- Limited endpoints exist under /connectors/confluence.
 
 Tenancy:
 - Pass X-Tenant-Id header to scope connections and operations. Defaults to "default" if missing.
@@ -82,8 +88,9 @@ Environment variables (key ones):
 - INTEGRATION_DB_URL (optional; default sqlite:///./integration.db)
 
 Troubleshooting startup (port 3001 not ready):
+- Use the recommended entrypoint: python -m integration_backend.app_entrypoint
 - Ensure the module path is correct: uvicorn src.api.main:app --port 3001
-- Verify Python path includes integration_backend/: using dev_server.py handles this for you
-- Check for import-time errors in logs (dev_server prints traceback if app import fails)
-- The app does not require secrets at import time; missing OAuth envs only affect /auth/jira/login behavior (returns 400)
-- Verify /healthz responds with 200; if not, check that requirements are installed and no syntax/import errors occurred
+- Verify Python path includes integration_backend/src; the app_entrypoint ensures this automatically
+- Check for import-time errors in logs (entrypoint prints traceback if app import fails)
+- The app does not require secrets at import time; missing OAuth envs only affect /auth/jira/login (returns 400)
+- Verify /healthz responds with 200; if not, ensure requirements are installed and no syntax/import errors occurred

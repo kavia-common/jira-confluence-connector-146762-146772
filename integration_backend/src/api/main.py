@@ -153,6 +153,12 @@ def health_check():
     """Health check endpoint indicating the API is up."""
     return _ocean_response({"service": "integration_backend", "health": "healthy"}, "service healthy")
 
+# PUBLIC_INTERFACE
+@app.get("/health", tags=["Health"], summary="Liveness probe", description="Basic liveness endpoint.")
+def health():
+    """Alias liveness endpoint for compatibility with some probes."""
+    return {"status": "ok"}
+
 @app.get("/healthz", tags=["Health"], summary="Readiness probe", description="Simple readiness endpoint for container orchestration.")
 def healthz():
     return {"status": "ok"}
