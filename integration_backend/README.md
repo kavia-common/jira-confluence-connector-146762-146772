@@ -2,17 +2,45 @@
 
 FastAPI backend for Jira/Confluence connector.
 
-Run:
-- pip install -r requirements.txt
-- cp .env.example .env  # edit values as needed (optional for dev)
-- python dev_server.py   # starts on port 3001
-# Alternatively:
-# uvicorn src.api.main:app --port 3001
+Quick start:
+1) python -m venv .venv && source .venv/bin/activate
+2) pip install -r requirements.txt
+3) (optional) cp .env.example .env and fill values; for startup, no secrets are required
+4) Start the server (choose one):
+   - python dev_server.py
+   - uvicorn src.api.main:app --host 0.0.0.0 --port 3001
+
+Important:
+- Uvicorn app import path is src.api.main:app (NOT main:app).
+- The API listens on port 3001. Check readiness via:
+  - GET http://localhost:3001/healthz -> {"status":"ok"}
+  - GET http://localhost:3001/docs -> Swagger UI
 
 Server:
 - Boots on port 3001
 - OpenAPI: /openapi.json
 - Docs: /docs
+- Health: /healthz and / (detailed)
+
+CORS:
+- Configure via BACKEND_CORS_ORIGINS or NEXT_PUBLIC_BACKEND_CORS_ORIGINS (comma-separated). Defaults to "*".
+
+OAuth (Jira):
+- /auth/jira/login
+  - GET returns { url: https://auth.atlassian.com/authorize?... } with required params (audience, client_id, scope, redirect_uri, response_type=code, prompt=consent, state)
+  - Pass ?redirect=true to receive a 307 redirect to Atlassian
+  - Generates signed state stored in HttpOnly SameSite=None cookie 'jira_oauth_state'
+  - Accepts optional ?return_url=... to persist and use on callback
+- /auth/jira/callback
+  - Requires 'state' param and matching signed cookie; returns 422 when missing/invalid (clear message)
+  - Requires 'code' param; returns 400 when missing
+  - On success, exchanges tokens and redirects to return_url, or FRONTEND_URL/login (connected=jira)
+- /auth/health helpers:
+  - /health/authorize-url -> returns authorize URL without redirect
+  - /health/redirect-uri -> shows active redirect URIs
+
+Confluence:
+- Similar routes exist under connectors/confluence (limited features).
 
 Tenancy:
 - Pass X-Tenant-Id header to scope connections and operations. Defaults to "default" if missing.
@@ -34,19 +62,6 @@ Connectors:
 - POST /connectors/confluence/create
 - POST /connectors/tools/invoke   (Kavia tool adapter scaffold)
 
-OAuth:
-- /auth/jira/login
-  - GET returns { url: https://auth.atlassian.com/authorize?... } with proper query params (audience, client_id, scope, redirect_uri, response_type=code, prompt=consent, state)
-  - Pass ?redirect=true to receive a 307 redirect to Atlassian
-  - Generates signed state stored in HttpOnly SameSite=Lax cookie 'jira_oauth_state'
-  - Accepts optional ?return_url=... to persist and use on callback
-- /auth/jira/callback
-  - Validates presence of 'state' and matches signed cookie
-  - Exchanges 'code' for tokens, persists, and redirects to return_url (or FRONTEND_URL/login)
-- /auth/confluence/login, /auth/confluence/callback similarly supported (see connectors/confluence/router.py)
-- State signing: HMAC with STATE_SIGNING_SECRET (or CSRF_SECRET/APP_SECRET_KEY/SECRET_KEY); HttpOnly SameSite=Lax cookie
-- CORS: configured via BACKEND_CORS_ORIGINS or NEXT_PUBLIC_BACKEND_CORS_ORIGINS (comma-separated)
-
 Token refresh:
 - Jira client refreshes before expiry and retries once on 401; saves new expiry/refreshed_at.
 
@@ -54,29 +69,21 @@ PAT/API key:
 - Optional Jira PAT enabled via ENABLE_JIRA_PAT=true. Save via PATCH /connectors/jira/connection { "pat": "..." }.
 - Secrets are masked in logs.
 
-List endpoints:
-- GET /connectors/jira/projects
-- GET /connectors/confluence/spaces
-
-Kavia tool hooks:
-- POST /connectors/tools/invoke with { tool: "jira.search" | "jira.create" | "jira.projects" | "confluence.search" | "confluence.spaces", args: {...} }
-
-Environment variables:
-- NEXT_PUBLIC_ATLASSIAN_CLIENT_ID
-- NEXT_PUBLIC_ATLASSIAN_CLIENT_SECRET
-- NEXT_PUBLIC_ATLASSIAN_REDIRECT_URI
-- NEXT_PUBLIC_JIRA_OAUTH_CLIENT_ID (fallback)
-- NEXT_PUBLIC_JIRA_OAUTH_CLIENT_SECRET (fallback)
-- NEXT_PUBLIC_CONFLUENCE_OAUTH_CLIENT_ID
-- NEXT_PUBLIC_CONFLUENCE_OAUTH_CLIENT_SECRET
-- NEXT_PUBLIC_CONFLUENCE_OAUTH_REDIRECT_URI
-- NEXT_PUBLIC_ATLASSIAN_CLOUD_BASE_URL
-- APP_FRONTEND_URL
+Environment variables (key ones):
+- JIRA_OAUTH_CLIENT_ID
+- JIRA_OAUTH_CLIENT_SECRET
+- JIRA_REDIRECT_URI (must match Atlassian dev console setting)
+- ATLASSIAN_CLOUD_BASE_URL
+- APP_FRONTEND_URL (used for post-auth redirect target)
 - BACKEND_CORS_ORIGINS or NEXT_PUBLIC_BACKEND_CORS_ORIGINS
 - ENABLE_JIRA_PAT (true/false)
 - ENABLE_OAUTH_PKCE (true/false)
 - STATE_SIGNING_SECRET (recommended)
+- INTEGRATION_DB_URL (optional; default sqlite:///./integration.db)
 
-Notes:
-- Confluence client is minimal for list/search/create.
-- Jira client implements normalization, pagination, and retry/refresh.
+Troubleshooting startup (port 3001 not ready):
+- Ensure the module path is correct: uvicorn src.api.main:app --port 3001
+- Verify Python path includes integration_backend/: using dev_server.py handles this for you
+- Check for import-time errors in logs (dev_server prints traceback if app import fails)
+- The app does not require secrets at import time; missing OAuth envs only affect /auth/jira/login behavior (returns 400)
+- Verify /healthz responds with 200; if not, check that requirements are installed and no syntax/import errors occurred

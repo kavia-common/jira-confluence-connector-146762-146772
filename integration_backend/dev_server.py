@@ -4,7 +4,11 @@ import uvicorn
 # PUBLIC_INTERFACE
 def main():
     """Run the FastAPI app on port 3001 for local/dev usage.
-    Use uvicorn module path 'src.api.main:app'. Ensure PYTHONPATH includes integration_backend/.
+
+    This uses the uvicorn module path 'src.api.main:app'.
+    Notes:
+    - No secrets are required at import time; missing OAuth envs will not prevent startup.
+    - Use HOST and PORT envs to override bind address and port (defaults: 0.0.0.0:3001).
     """
     # Import here to surface any import-time errors in a controlled way
     try:
@@ -18,7 +22,8 @@ def main():
 
     host = os.environ.get("HOST", "0.0.0.0")
     port = int(os.environ.get("PORT", "3001"))
-    uvicorn.run("src.api.main:app", host=host, port=port, reload=False)
+    # Explicitly specify factory path string; avoids issues with double import
+    uvicorn.run("src.api.main:app", host=host, port=port, reload=False, lifespan="on")
 
 if __name__ == "__main__":
     main()
