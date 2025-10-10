@@ -55,7 +55,10 @@ Now supports OAuth 2.0 (3LO) for Atlassian (Jira/Confluence):
 Set the following environment variables (see `.env.example`):
 - ATLASSIAN_CLOUD_BASE_URL: e.g., https://your-team.atlassian.net
 - JIRA_OAUTH_CLIENT_ID, JIRA_OAUTH_CLIENT_SECRET
-- JIRA_OAUTH_REDIRECT_URI: e.g., https://yourapp.com/api/auth/jira/callback
+- JIRA_REDIRECT_URI (preferred): e.g., https://vscode-internal-37302-beta.beta01.cloud.kavia.ai:3001/auth/jira/callback
+  - Fallbacks supported: JIRA_OAUTH_REDIRECT_URI, ATLASSIAN_REDIRECT_URI, NEXT_PUBLIC_JIRA_REDIRECT_URI, NEXT_PUBLIC_JIRA_OAUTH_REDIRECT_URI, NEXT_PUBLIC_ATLASSIAN_REDIRECT_URI
+- Preferred Jira callback env:
+  - JIRA_REDIRECT_URI (defaults to https://vscode-internal-37302-beta.beta01.cloud.kavia.ai:3001/auth/jira/callback if unset)
 - Optional for Confluence if using separate app:
   - CONFLUENCE_OAUTH_CLIENT_ID, CONFLUENCE_OAUTH_CLIENT_SECRET
   - CONFLUENCE_OAUTH_REDIRECT_URI

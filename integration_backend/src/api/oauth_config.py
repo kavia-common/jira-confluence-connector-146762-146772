@@ -23,13 +23,13 @@ import os
 from typing import Dict
 
 
-def _env_first(*names: str) -> str:
+def _env_first(*names: str, default: str = "") -> str:
     """Return the first non-empty environment variable value among names (trimmed)."""
     for name in names:
         val = os.getenv(name, "")
         if val and val.strip():
             return val.strip()
-    return ""
+    return default
 
 
 # PUBLIC_INTERFACE
@@ -43,7 +43,11 @@ def get_atlassian_base_url() -> str:
 
 # PUBLIC_INTERFACE
 def get_jira_oauth_config() -> Dict[str, str]:
-    """Return Jira OAuth 2.0 config from the environment with robust fallbacks."""
+    """Return Jira OAuth 2.0 config from the environment with robust fallbacks.
+
+    Redirect URI resolution prefers explicit JIRA_REDIRECT_URI style variables and
+    falls back to the provided default callback URL if nothing is set.
+    """
     client_id = _env_first(
         "JIRA_OAUTH_CLIENT_ID",
         "ATLASSIAN_CLIENT_ID",
@@ -57,11 +61,18 @@ def get_jira_oauth_config() -> Dict[str, str]:
         "NEXT_PUBLIC_JIRA_OAUTH_CLIENT_SECRET",
         "NEXT_PUBLIC_ATLASSIAN_CLIENT_SECRET",
     )
+    # Resolve redirect URI with strong precedence and a safe default
+    default_redirect = "https://vscode-internal-37302-beta.beta01.cloud.kavia.ai:3001/auth/jira/callback"
     redirect_uri = _env_first(
+        # new canonical env
+        "JIRA_REDIRECT_URI",
+        # existing variants
         "JIRA_OAUTH_REDIRECT_URI",
         "ATLASSIAN_REDIRECT_URI",
+        "NEXT_PUBLIC_JIRA_REDIRECT_URI",
         "NEXT_PUBLIC_JIRA_OAUTH_REDIRECT_URI",
         "NEXT_PUBLIC_ATLASSIAN_REDIRECT_URI",
+        default=default_redirect,
     )
     return {
         "client_id": client_id,
