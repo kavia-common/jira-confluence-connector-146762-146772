@@ -321,14 +321,23 @@ def health_check():
     summary="Start Jira OAuth 2.0 login",
     description="Redirects the user to Atlassian authorization page. Frontend should open this URL to start the flow.",
 )
-def jira_login(request: Request, state: Optional[str] = None, scope: Optional[str] = None):
+def jira_login(
+    request: Request,
+    state: Optional[str] = None,
+    scope: Optional[str] = None,
+    response: Optional[str] = None,
+):
     """
     Initiate Jira OAuth 2.0 authorization flow using Atlassian OAuth 2.0 (3LO).
+
     Parameters:
         state: Optional opaque state to be returned by Atlassian to mitigate CSRF (frontend should generate and verify).
         scope: Optional space-separated scopes. If not provided, defaults to commonly used scopes configured in your app.
+        response: Optional. If set to "json", returns a JSON body with the built authorize URL instead of redirecting.
+                  This is useful for automated verification and testing.
+
     Returns:
-        Redirect to Atlassian authorization endpoint.
+        302 Redirect to Atlassian authorization endpoint, or JSON with {"authorize_url": "..."} when response=json.
     """
     provider = "jira"
     try:
@@ -348,7 +357,7 @@ def jira_login(request: Request, state: Optional[str] = None, scope: Optional[st
             _log_event(logging.ERROR, "oauth_login_config_error", request, provider=provider)
             raise HTTPException(status_code=500, detail="Jira OAuth is not configured. Set environment variables.")
 
-        # Default scopes can be tailored based on your app setup in Atlassian developer console
+        # Default scopes per requirements
         default_scopes = [
             "read:jira-work",
             "read:jira-user",
@@ -356,8 +365,10 @@ def jira_login(request: Request, state: Optional[str] = None, scope: Optional[st
         ]
         scopes = scope or " ".join(default_scopes)
 
-        authorize_url = "https://auth.atlassian.com/authorize"
-        params = {
+        # Build the URL robustly with urllib.parse to ensure proper encoding and joining
+        authorize_base = "https://auth.atlassian.com/authorize"
+        # Important: urlencode with safe="" so spaces become %20 per strict encoding, not +
+        query_params = {
             "audience": "api.atlassian.com",
             "client_id": client_id,
             "scope": scopes,
@@ -366,19 +377,28 @@ def jira_login(request: Request, state: Optional[str] = None, scope: Optional[st
             "prompt": "consent",
         }
         if state:
-            params["state"] = state
+            query_params["state"] = state
 
-        url = f"{authorize_url}?{urllib.parse.urlencode(params)}"
+        # Use urlencode with quote_via=quote to encode spaces as %20 to match strict expectations
+        query_string = urllib.parse.urlencode(query_params, quote_via=urllib.parse.quote, safe="")
+        built_url = urllib.parse.urljoin(authorize_base, "") + ("?" + query_string if query_string else "")
+
         _log_event(
             logging.INFO,
             "oauth_login_redirect",
             request,
             provider=provider,
-            authorize_endpoint=authorize_url,
+            authorize_endpoint=authorize_base,
             has_state=bool(state),
             scope_count=(len(scopes.split()) if scopes else 0),
         )
-        return RedirectResponse(url)
+
+        # If client requested JSON for verification, return it
+        wants_json = (response == "json") or ("application/json" in (request.headers.get("accept") or ""))
+        if wants_json:
+            return JSONResponse({"authorize_url": built_url})
+
+        return RedirectResponse(built_url)
     except HTTPException:
         APP_LOGGER.exception("OAuth login HTTPException", extra={
             "request_id": getattr(request.state, "request_id", None),
@@ -1076,12 +1096,12 @@ def list_confluence_pages_endpoint(owner_id: int, db=Depends(get_db)):
     summary="Alias: Start Jira OAuth 2.0 login (/api prefix)",
     description="Compatibility alias for environments where a proxy forwards '/api/auth/jira/login' to backend unchanged.",
 )
-def jira_login_api_alias(request: Request, state: Optional[str] = None, scope: Optional[str] = None):
+def jira_login_api_alias(request: Request, state: Optional[str] = None, scope: Optional[str] = None, response: Optional[str] = None):
     """
     Alias wrapper for /auth/jira/login to support '/api' prefixed routes through proxies.
     """
     _log_event(logging.INFO, "oauth_alias_route_invoked", request, provider="jira", alias="/api/auth/jira/login")
-    return jira_login(request, state=state, scope=scope)
+    return jira_login(request, state=state, scope=scope, response=response)
 
 
 # PUBLIC_INTERFACE

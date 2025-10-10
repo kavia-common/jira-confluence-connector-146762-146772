@@ -62,7 +62,8 @@ def get_jira_oauth_config() -> Dict[str, str]:
         "NEXT_PUBLIC_ATLASSIAN_CLIENT_SECRET",
     )
     # Resolve redirect URI with strong precedence and a safe default
-    default_redirect = "https://vscode-internal-37302-beta.beta01.cloud.kavia.ai:3001/auth/jira/callback"
+    # Default aligns with current deployment; override via environment (recommended).
+    default_redirect = "https://vscode-internal-13311-beta.beta01.cloud.kavia.ai:3001/auth/jira/callback"
     redirect_uri = _env_first(
         # new canonical env
         "JIRA_REDIRECT_URI",
