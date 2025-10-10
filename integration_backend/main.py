@@ -1,7 +1,12 @@
 """
 Compatibility module exposing FastAPI `app` for environments that expect uvicorn main:app.
 
-Preferred entrypoint remains:
+Supported import paths for the app:
+- integration_backend.main_app:app (preferred)
+- integration_backend.main:app (this module)
+- asgi:app (compat)
+
+Preferred start command:
   uvicorn integration_backend.main_app:app --host 0.0.0.0 --port 3001
 
 This module avoids relying on external PYTHONPATH by importing app from src.api.main,

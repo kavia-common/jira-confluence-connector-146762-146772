@@ -1,8 +1,13 @@
 """
 Stable top-level FastAPI application module.
 
-Use from repository root:
-    uvicorn integration_backend.main_app:app --host 0.0.0.0 --port 3001
+Preview/runner can import the app from:
+- integration_backend.main_app:app  (preferred)
+- integration_backend.main:app      (compat)
+- asgi:app                          (compat)
+
+Start command example:
+  uvicorn integration_backend.main_app:app --host 0.0.0.0 --port 3001
 
 This avoids relying on external PYTHONPATH by adding the local `src` directory
 to sys.path at import time, then importing the actual app from src.api.main.
