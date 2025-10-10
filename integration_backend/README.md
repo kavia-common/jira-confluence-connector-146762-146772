@@ -11,6 +11,11 @@ Start the server (recommended; ensures imports resolve from any working director
 - python -m integration_backend.app_entrypoint
 - uvicorn integration_backend.main_app:app --host 0.0.0.0 --port 3001
 
+Compatibility:
+- Some preview environments may try uvicorn main:app from the integration_backend directory.
+  A module alias is provided at integration_backend/main.py so this also works:
+  - uvicorn main:app --host 0.0.0.0 --port 3001
+
 Alternate (when working directory is integration_backend and PYTHONPATH includes ./src):
 - python dev_server.py
 - uvicorn src.api.main:app --host 0.0.0.0 --port 3001
