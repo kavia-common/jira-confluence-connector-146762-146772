@@ -13,6 +13,10 @@ from fastapi import FastAPI, Depends, HTTPException, status, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse, JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import Response
+import secrets
+import hmac
+import hashlib
 
 from src.db.config import Base, engine, get_db
 from src.db.service import (
@@ -109,6 +113,53 @@ def _configure_logging() -> logging.Logger:
 
 
 APP_LOGGER = _configure_logging()
+
+# -----------------------
+# OAuth state signing and cookies
+# -----------------------
+
+# Cookie names
+_OAUTH_STATE_COOKIE = "oauth_state"
+_OAUTH_RETURN_URL_COOKIE = "oauth_return_url"
+
+# PUBLIC_INTERFACE
+def get_oauth_state_secret() -> str:
+    """Return the secret used to sign OAuth state cookies (from env OAUTH_STATE_SECRET or fallback)."""
+    return os.getenv("OAUTH_STATE_SECRET") or os.getenv("SECRET_KEY") or "dev-state-secret-change-me"
+
+def _sign_value(value: str, secret: str) -> str:
+    """Create HMAC-SHA256 signature for a value using the given secret."""
+    mac = hmac.new(secret.encode("utf-8"), msg=value.encode("utf-8"), digestmod=hashlib.sha256).hexdigest()
+    return f"{value}.{mac}"
+
+def _verify_signed_value(signed: str, secret: str) -> Optional[str]:
+    """Verify signed value and return original value if valid, else None."""
+    if not signed or "." not in signed:
+        return None
+    try:
+        raw, sig = signed.rsplit(".", 1)
+    except ValueError:
+        return None
+    expected = hmac.new(secret.encode("utf-8"), msg=raw.encode("utf-8"), digestmod=hashlib.sha256).hexdigest()
+    if hmac.compare_digest(expected, sig):
+        return raw
+    return None
+
+def _set_cookie(response: Response, name: str, value: str, max_age: int = 600) -> None:
+    """Set a secure, HTTPOnly cookie with SameSite=Lax for OAuth flow."""
+    response.set_cookie(
+        key=name,
+        value=value,
+        max_age=max_age,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        path="/",
+    )
+
+def _clear_cookie(response: Response, name: str) -> None:
+    """Clear a cookie by setting expiration in the past."""
+    response.delete_cookie(key=name, path="/")
 
 
 # -----------------------
@@ -367,6 +418,7 @@ def jira_login(
     state: Optional[str] = None,
     scope: Optional[str] = None,
     response: Optional[str] = None,
+    return_url: Optional[str] = None,
 ):
     """
     Initiate Jira OAuth 2.0 authorization flow using Atlassian OAuth 2.0 (3LO).
@@ -428,8 +480,19 @@ def jira_login(
             "response_type": "code",
             "prompt": "consent",
         }
-        if state:
-            query_params["state"] = state
+        # Generate a secure state if not provided by client
+        raw_state = state or secrets.token_urlsafe(24)
+        secret = get_oauth_state_secret()
+        signed_state = _sign_value(raw_state, secret)
+        query_params["state"] = raw_state  # send raw state to Atlassian
+
+        # Optionally store a safe return_url to redirect to after success (must be path or same-origin relative)
+        safe_return_url = None
+        if return_url:
+            # Only allow relative paths to avoid open redirects
+            parsed = urllib.parse.urlparse(return_url)
+            if not parsed.scheme and not parsed.netloc and return_url.startswith("/"):
+                safe_return_url = return_url
 
         # Use urlencode with quote_via=quote to encode spaces as %20 to match strict expectations
         query_string = urllib.parse.urlencode(query_params, quote_via=urllib.parse.quote, safe="")
@@ -441,16 +504,23 @@ def jira_login(
             request,
             provider=provider,
             authorize_endpoint=authorize_base,
-            has_state=bool(state),
+            has_state=True,
             scope_count=(len(scopes.split()) if scopes else 0),
         )
 
-        # If client requested JSON for verification, return it
+        # Prepare response and set cookies
         wants_json = (response == "json") or ("application/json" in (request.headers.get("accept") or ""))
         if wants_json:
-            return JSONResponse({"authorize_url": built_url})
+            resp: Response = JSONResponse({"authorize_url": built_url})
+        else:
+            resp = RedirectResponse(built_url)
 
-        return RedirectResponse(built_url)
+        # Store signed state and optional return_url
+        _set_cookie(resp, _OAUTH_STATE_COOKIE, signed_state, max_age=600)
+        if safe_return_url:
+            _set_cookie(resp, _OAUTH_RETURN_URL_COOKIE, _sign_value(safe_return_url, secret), max_age=600)
+
+        return resp
     except HTTPException:
         APP_LOGGER.exception("OAuth login HTTPException", extra={
             "request_id": getattr(request.state, "request_id", None),
@@ -498,6 +568,25 @@ async def jira_callback(
         if not code:
             _log_event(logging.ERROR, "oauth_missing_code", request, provider=provider, status_code=400)
             raise HTTPException(status_code=400, detail="Missing authorization code")
+        # Validate state using signed cookie
+        cookie_signed_state = request.cookies.get(_OAUTH_STATE_COOKIE)
+        secret = get_oauth_state_secret()
+        expected_state = _verify_signed_value(cookie_signed_state, secret) if cookie_signed_state else None
+        if not state or not expected_state or state != expected_state:
+            _log_event(
+                logging.ERROR,
+                "oauth_state_invalid",
+                request,
+                provider=provider,
+                status_code=400,
+                has_state=bool(state),
+                has_cookie=bool(cookie_signed_state),
+            )
+            wants_json_err = (response == "json") or ("application/json" in (request.headers.get("accept") or ""))
+            msg = "Invalid or missing OAuth state. Please restart login."
+            if wants_json_err:
+                return JSONResponse(status_code=400, content={"status": "error", "message": msg})
+            raise HTTPException(status_code=400, detail=msg)
 
         cfg = get_jira_oauth_config()
         client_id = cfg.get("client_id") or ""
@@ -681,8 +770,32 @@ async def jira_callback(
         redirect_to = f"{frontend.rstrip('/')}/oauth/callback?{urllib.parse.urlencode(params)}"
         _log_event(logging.INFO, "frontend_redirect", request, provider=provider, redirect=redirect_to)
 
+        # Prefer server-side stored return_url if valid and safe
+        return_url_cookie = request.cookies.get(_OAUTH_RETURN_URL_COOKIE)
+        resolved_return_url = None
+        if return_url_cookie:
+            raw_return = _verify_signed_value(return_url_cookie, secret)
+            if raw_return:
+                resolved_return_url = raw_return
+
+        # Build final redirect target (frontend default or provided return_url path)
+        if resolved_return_url:
+            # If a return_url exists, attach query params to it
+            base_frontend = get_frontend_base_url_default() or ""
+            # If return_url is just a path, we can join with base_frontend if provided, else use as path
+            if base_frontend:
+                # Ensure absolute url
+                redirect_base = base_frontend.rstrip("/") + resolved_return_url
+            else:
+                redirect_base = resolved_return_url
+            redirect_to = f"{redirect_base}{'&' if '?' in redirect_base else '?'}{urllib.parse.urlencode(params)}"
+
+        _log_event(logging.INFO, "frontend_redirect", request, provider=provider, redirect=redirect_to)
+
+        # Clear cookies after use
+        final_resp: Response
         if wants_json:
-            return JSONResponse(
+            final_resp = JSONResponse(
                 {
                     "status": "success",
                     "message": "OAuth callback handled",
@@ -693,8 +806,12 @@ async def jira_callback(
                     "request_path": current_path,
                 }
             )
+        else:
+            final_resp = RedirectResponse(redirect_to)
 
-        return RedirectResponse(redirect_to)
+        _clear_cookie(final_resp, _OAUTH_STATE_COOKIE)
+        _clear_cookie(final_resp, _OAUTH_RETURN_URL_COOKIE)
+        return final_resp
     except HTTPException:
         APP_LOGGER.exception(
             "OAuth callback HTTPException",
@@ -1272,12 +1389,12 @@ def jira_login_api_alias(request: Request, state: Optional[str] = None, scope: O
     summary="Alias: Jira OAuth 2.0 callback (/api prefix)",
     description="Compatibility alias mapping '/api/auth/jira/callback' to the existing Jira callback handler.",
 )
-async def jira_callback_api_alias(request: Request, db=Depends(get_db), code: Optional[str] = None, state: Optional[str] = None):
+async def jira_callback_api_alias(request: Request, db=Depends(get_db), code: Optional[str] = None, state: Optional[str] = None, response: Optional[str] = None):
     """
     Alias wrapper for /auth/jira/callback to support '/api' prefixed routes.
     """
     _log_event(logging.INFO, "oauth_alias_route_invoked", request, provider="jira", alias="/api/auth/jira/callback")
-    return await jira_callback(request, db, code, state)
+    return await jira_callback(request, db, code, state, response)
 
 
 # PUBLIC_INTERFACE
