@@ -43,6 +43,8 @@ class User(Base, TimestampMixin):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
     display_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    # Password auth (bcrypt hash). Optional; present when credentials login is used.
+    password_hash: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 
     # OAuth or access tokens (for demo purposes; real deployments should encrypt/secret-manage)
     jira_token: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

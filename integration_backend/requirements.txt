@@ -45,3 +45,5 @@ watchfiles==1.0.5
 websockets==15.0.1
 cryptography==43.0.3
 requests==2.32.3
+PyJWT==2.9.0
+bcrypt==4.2.1

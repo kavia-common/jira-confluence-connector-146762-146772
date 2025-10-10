@@ -365,6 +365,10 @@ from src.api.routers import connectors as connectors_router  # noqa: E402
 
 app.include_router(connectors_router.router)
 
+# Mount credentials/CSRF auth routes
+from src.api.auth import router as auth_router  # noqa: E402
+app.include_router(auth_router)
+
 # Global unhandled exception handler
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
