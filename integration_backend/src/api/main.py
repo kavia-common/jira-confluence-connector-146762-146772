@@ -75,6 +75,7 @@ openapi_tags = [
     {"name": "Connectors", "description": "Standardized connector endpoints per provider, mounted at /connectors/{id}."},
 ]
 
+# PUBLIC_INTERFACE
 app = FastAPI(
     title="Jira-Confluence Integration API",
     description="Backend API for integrating JIRA and Confluence, with OAuth routes for Jira and Confluence documented under the 'Auth' tag.",
@@ -150,6 +151,7 @@ except Exception:
 
 @app.get("/favicon.ico", include_in_schema=False)
 def favicon():
+    """Return the favicon.ico if available, otherwise a 1x1 PNG to avoid 404s."""
     fav_path = os.path.join(static_dir, "favicon.ico")
     if os.path.isfile(fav_path):
         return FileResponse(fav_path, media_type="image/x-icon")
@@ -165,9 +167,10 @@ def favicon():
 def _ocean_response(data: Any, message: str = "ok") -> Dict[str, Any]:
     return {"status": "success", "message": message, "data": data}
 
+# PUBLIC_INTERFACE
 @app.get("/", tags=["Health"], summary="Health Check")
 def health_check():
-    """Health check endpoint indicating the API is up."""
+    """Health check endpoint indicating the API is up and returning a structured status payload."""
     return _ocean_response({"service": "integration_backend", "health": "healthy"}, "service healthy")
 
 
@@ -178,13 +181,16 @@ def cors_preflight_probe():
     return Response(status_code=200)
 
 # PUBLIC_INTERFACE
+# PUBLIC_INTERFACE
 @app.get("/health", tags=["Health"], summary="Liveness probe", description="Basic liveness endpoint.")
 def health():
-    """Alias liveness endpoint for compatibility with some probes."""
+    """Return a minimal JSON indicating liveness for container probes."""
     return {"status": "ok"}
 
+# PUBLIC_INTERFACE
 @app.get("/healthz", tags=["Health"], summary="Readiness probe", description="Simple readiness endpoint for container orchestration.")
 def healthz():
+    """Return a minimal JSON indicating readiness (dependencies are minimal and checked at request time)."""
     return {"status": "ok"}
 
 @app.get("/health/redirect-uri", tags=["Health"], summary="Active Atlassian redirect URIs", description="Returns which redirect URIs are currently active for Jira and Confluence, for operator verification.")
