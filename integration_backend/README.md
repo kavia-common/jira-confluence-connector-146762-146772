@@ -28,7 +28,14 @@ Server:
 - Health: /healthz, /health, and / (detailed)
 
 CORS:
-- Configure via BACKEND_CORS_ORIGINS or NEXT_PUBLIC_BACKEND_CORS_ORIGINS (comma-separated). Defaults to "*".
+- Configure via ALLOWED_ORIGINS (preferred) as a comma-separated list.
+- Fallbacks: BACKEND_CORS_ORIGINS or NEXT_PUBLIC_BACKEND_CORS_ORIGINS if ALLOWED_ORIGINS is unset.
+- If you use cookies/credentials (OAuth state cookie, session cookies) you MUST set explicit origins; wildcard "*" is not allowed when allow_credentials=true.
+- The middleware allows methods: GET, POST, PUT, PATCH, DELETE, OPTIONS and headers: Authorization, Content-Type, X-CSRF-Token, X-Requested-With, Accept, Origin.
+- Example:
+  - ALLOWED_ORIGINS=http://localhost:3000,https://vscode-internal-12731-beta.beta01.cloud.kavia.ai:3000
+- Preflight:
+  - Starlette CORSMiddleware handles OPTIONS automatically. A helper endpoint exists at OPTIONS /__cors_probe__ for simple verification.
 
 OAuth (Jira):
 - /auth/jira/login
@@ -86,6 +93,22 @@ Environment variables (key ones):
 - ENABLE_OAUTH_PKCE (true/false)
 - STATE_SIGNING_SECRET (recommended)
 - INTEGRATION_DB_URL (optional; default sqlite:///./integration.db)
+
+Validation (CORS):
+1) Set ALLOWED_ORIGINS in integration_backend/.env to include your Next.js origin (e.g., https://vscode-internal-12731-beta.beta01.cloud.kavia.ai:3000).
+2) Start backend: python -m integration_backend.app_entrypoint
+3) From the browser/Next.js origin, call:
+   - GET https://<backend-host>:3001/health
+   - Expect 200 and response headers including:
+     - Access-Control-Allow-Origin: <your-frontend-origin>
+     - Access-Control-Allow-Credentials: true (if credentials are used)
+   - For preflight, ensure the browser sends OPTIONS and receives 204/200 with appropriate Access-Control-Allow-* headers.
+4) You can hit OPTIONS /__cors_probe__ manually to confirm a 200 status with CORS headers added by middleware.
+
+OAuth cookies and CORS:
+- OAuth state and CSRF cookies are issued with Secure and SameSite settings appropriate to cross-site usage.
+- SameSite=None; Secure is required for third-party cookie contexts. Ensure your environment uses HTTPS.
+- These cookies do not conflict with CORS; however, browsers require Access-Control-Allow-Credentials and explicit origin matches for credentialed requests.
 
 Troubleshooting startup (port 3001 not ready):
 - Use the recommended entrypoint: python -m integration_backend.app_entrypoint

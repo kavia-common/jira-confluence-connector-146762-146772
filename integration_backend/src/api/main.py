@@ -101,14 +101,31 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
 app.add_middleware(RequestIDMiddleware)
 
 # CORS
-configured = os.getenv("NEXT_PUBLIC_BACKEND_CORS_ORIGINS") or os.getenv("BACKEND_CORS_ORIGINS") or ""
-configured_list = [o.strip() for o in configured.split(",")] if configured else ["*"]
+# Read allowed origins from ALLOWED_ORIGINS (preferred), with fallbacks to BACKEND_CORS_ORIGINS and NEXT_PUBLIC_BACKEND_CORS_ORIGINS.
+# Comma-separated list, trimming spaces. If not provided, default to "*".
+allowed_origins_raw = (
+    os.getenv("ALLOWED_ORIGINS")
+    or os.getenv("BACKEND_CORS_ORIGINS")
+    or os.getenv("NEXT_PUBLIC_BACKEND_CORS_ORIGINS")
+    or ""
+)
+allowed_origins = [o.strip() for o in allowed_origins_raw.split(",") if o and o.strip()] if allowed_origins_raw else ["*"]
+
+# When allow_credentials is True, Starlette will reject "*" origins; require explicit origins for cookies/auth.
+allow_credentials = True
+if allow_credentials and allowed_origins == ["*"]:
+    # In credentials mode, no wildcard allowed. Keep wildcard only if you know you won't use cookies/Authorization.
+    # To be safe, if no explicit origins are specified, default to an empty list (no cross-site) rather than "*".
+    allowed_origins = []
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=configured_list,
-    allow_credentials=True,
-    allow_methods=["GET", "OPTIONS", "POST", "PATCH", "DELETE"],
-    allow_headers=["*"],
+    allow_origins=allowed_origins,
+    allow_credentials=allow_credentials,
+    # Include the common methods and ensure OPTIONS is present for preflight handling
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    # Explicitly allow Authorization and Content-Type to avoid preflight failures
+    allow_headers=["Authorization", "Content-Type", "X-CSRF-Token", "X-Requested-With", "Accept", "Origin"],
     expose_headers=["X-Request-ID"],
     max_age=600,
 )
@@ -152,6 +169,13 @@ def _ocean_response(data: Any, message: str = "ok") -> Dict[str, Any]:
 def health_check():
     """Health check endpoint indicating the API is up."""
     return _ocean_response({"service": "integration_backend", "health": "healthy"}, "service healthy")
+
+
+# PUBLIC_INTERFACE
+@app.options("/__cors_probe__", tags=["Health"], summary="CORS preflight probe", description="Returns 200 OK to help verify CORS preflight behavior. Real preflight handling is performed by CORSMiddleware.")
+def cors_preflight_probe():
+    """Simple OPTIONS endpoint for CORS verification in environments/tools that expect application-level response."""
+    return Response(status_code=200)
 
 # PUBLIC_INTERFACE
 @app.get("/health", tags=["Health"], summary="Liveness probe", description="Basic liveness endpoint.")
