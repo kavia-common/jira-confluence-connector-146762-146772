@@ -99,6 +99,41 @@ def _verify_signed_csrf(signed: str) -> bool:
 
 router = APIRouter(tags=["Auth"])
 
+# PUBLIC_INTERFACE
+@router.get("/auth/csrf/resolve", summary="Resolve state to CSRF", description="Resolves a state-backed CSRF reference after OAuth and issues CSRF cookie and JSON token.")
+def csrf_resolve(state: str | None = None) -> JSONResponse:
+    """
+    Resolve a state reference to a CSRF token, set HttpOnly SameSite=Lax cookie,
+    and return token in JSON so clients can echo it via X-CSRF-Token.
+
+    Notes:
+    - For current implementation, we simply validate the HMAC signature format of the provided state
+      and reuse it as CSRF if valid. This keeps a single-click flow after OAuth.
+    - If state is missing or invalid, a new CSRF is issued to avoid blocking the login flow.
+    """
+    # Validate signed state if provided (same HMAC logic as CSRF signing)
+    token: str
+    if state and _verify_signed_csrf(state):
+        token = state
+    else:
+        raw = secrets.token_urlsafe(24)
+        token = _sign_csrf(raw)
+
+    response = JSONResponse(
+        status_code=status.HTTP_200_OK,
+        content={"status": "success", "token": token},
+    )
+    response.set_cookie(
+        key=CSRF_COOKIE_NAME,
+        value=token,
+        max_age=CSRF_COOKIE_TTL,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        path="/",
+    )
+    return response
+
 
 class LoginRequest(BaseModel):
     """Request body for credential login."""

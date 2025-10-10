@@ -365,6 +365,37 @@ from src.api.routers import connectors as connectors_router  # noqa: E402
 
 app.include_router(connectors_router.router)
 
+# Serve static files (favicon)
+from fastapi.staticfiles import StaticFiles  # noqa: E402
+from fastapi import Response  # noqa: E402
+
+static_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "..", "static")
+# Normalize path
+static_dir = os.path.abspath(static_dir)
+try:
+    app.mount("/static", StaticFiles(directory=static_dir), name="static")
+except Exception:
+    # If static directory missing, skip mounting
+    pass
+
+# PUBLIC_INTERFACE
+@app.get("/favicon.ico", tags=["Health"], summary="Favicon")
+def favicon():
+    """Serve favicon to avoid 404s from browsers."""
+    # Try static favicon.ico
+    fav_path = os.path.join(static_dir, "favicon.ico")
+    if os.path.isfile(fav_path):
+        from fastapi.responses import FileResponse
+        return FileResponse(fav_path, media_type="image/x-icon")
+    # Transparent 1x1 PNG fallback
+    png_base64 = (
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMA"
+        "ASsJTYQAAAAASUVORK5CYII="
+    )
+    import base64
+    data = base64.b64decode(png_base64)
+    return Response(content=data, media_type="image/png")
+
 # Mount credentials/CSRF auth routes
 from src.api.auth import router as auth_router  # noqa: E402
 app.include_router(auth_router)
@@ -881,15 +912,8 @@ async def jira_callback(
     state: Optional[str] = None,
 ):
     """
-    Jira OAuth callback handler that delegates token exchange/persistence to the Jira connector,
-    then redirects to the frontend success route.
-
-    Redirect:
-      APP_FRONTEND_URL + "/oauth/jira?status=success&tenant_id=<tid>&state=<state>&provider=jira"
-
-    Notes:
-      - Always return a 307 redirect with Cache-Control: no-store on success.
-      - Requires a valid server-generated CSRF 'state' that matches the signed cookie set at /auth/jira/login.
+    Jira OAuth callback handler that exchanges code for tokens and then redirects to the frontend login
+    with a short-lived state reference; the frontend will fetch CSRF from /auth/csrf or /auth/csrf/resolve.
     """
     provider = "jira"
     _log_event(logging.INFO, "oauth_callback_received", request, provider=provider, has_state=bool(state))
@@ -898,7 +922,6 @@ async def jira_callback(
     cookie_state = request.cookies.get(_STATE_COOKIE_NAME)
     if not state:
         _log_event(logging.ERROR, "oauth_state_missing", request, provider=provider, status_code=422)
-        # Clear any existing cookie defensively
         resp = JSONResponse(status_code=422, content={"detail": "Missing state parameter"})
         resp.delete_cookie(_STATE_COOKIE_NAME, path="/")
         return resp
@@ -923,7 +946,6 @@ async def jira_callback(
         resp.delete_cookie(_STATE_COOKIE_NAME, path="/")
         return resp
 
-    # Verify signature and constant-time match with cookie
     if not _verify_signed_state(csrf_from_state) or not hmac.compare_digest(str(cookie_state), str(csrf_from_state)):
         _log_event(logging.ERROR, "oauth_state_mismatch", request, provider=provider, status_code=422)
         resp = JSONResponse(status_code=422, content={"detail": "State mismatch"})
@@ -938,37 +960,34 @@ async def jira_callback(
             if isinstance(j, dict) and j.get("tenant_id"):
                 tenant_id = str(j.get("tenant_id"))
         except Exception:
-            # fall back to querystring parsing
             try:
                 qs = urllib.parse.parse_qs(state)
                 if "tenant_id" in qs and qs.get("tenant_id"):
                     tenant_id = str(qs.get("tenant_id")[0])
             except Exception:
                 pass
+
     try:
         if not code:
             _log_event(logging.ERROR, "oauth_missing_code", request, provider=provider, status_code=400)
             raise HTTPException(status_code=400, detail="Missing authorization code")
 
-        # Delegate to Jira connector for token exchange/persistence (sync connector on sync thread)
         from src.connectors.jira.impl import JiraConnector
         connector = JiraConnector().with_db(db)
         connector.oauth_callback(code=code, tenant_id=tenant_id, state=state)
 
-        # Build frontend redirect URL with required params
+        # Build frontend redirect to login with state reference; frontend will resolve CSRF
         frontend_base = get_frontend_base_url_default()
-        return_path = "/oauth/jira"
+        login_path = "/login"
         params = {
+            "oauth": "atlassian",
             "status": "success",
-            "tenant_id": tenant_id,
-            "state": state or "",
-            "provider": "jira",
+            "state": csrf_from_state or "",
         }
-        redirect_to = f"{frontend_base.rstrip('/')}{return_path}?{urllib.parse.urlencode(params)}" if frontend_base else f"/oauth/jira?{urllib.parse.urlencode(params)}"
-        _log_event(logging.INFO, "frontend_redirect", request, provider=provider, redirect=redirect_to)
-        response = RedirectResponse(url=redirect_to, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+        redirect_to = f"{frontend_base.rstrip('/')}{login_path}?{urllib.parse.urlencode(params)}" if frontend_base else f"/login?{urllib.parse.urlencode(params)}"
+        _log_event(logging.INFO, "frontend_redirect_login", request, provider=provider, redirect=redirect_to)
+        response = RedirectResponse(url=redirect_to, status_code=status.HTTP_302_FOUND)
         response.headers["Cache-Control"] = "no-store"
-        # Rotate/clear state cookie after successful validation and redirect
         response.delete_cookie(_STATE_COOKIE_NAME, path="/")
         return response
     except HTTPException:

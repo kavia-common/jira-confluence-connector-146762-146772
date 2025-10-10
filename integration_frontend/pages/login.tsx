@@ -31,9 +31,11 @@ export default function LoginPage() {
     }
     async function fetchCsrf() {
       try {
-        const res = await fetch(`${backendBase}/auth/csrf`, {
-          credentials: "include",
-        });
+        // If redirected from OAuth, resolve using state reference, else fetch fresh CSRF
+        const qs = new URLSearchParams(window.location.search);
+        const stateRef = qs.get("state");
+        const endpoint = stateRef ? `${backendBase}/auth/csrf/resolve?state=${encodeURIComponent(stateRef)}` : `${backendBase}/auth/csrf`;
+        const res = await fetch(endpoint, { credentials: "include" });
         const data = await res.json().catch(() => ({}));
         const token = data?.token || data?.csrf_token;
         if (token) {
