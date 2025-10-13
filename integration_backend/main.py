@@ -27,3 +27,11 @@ except ModuleNotFoundError:
     if _src not in sys.path:
         sys.path.insert(0, _src)
     from api.main import app  # type: ignore  # noqa: F401
+
+# Allow running this module directly to start uvicorn on 0.0.0.0:3001
+if __name__ == "__main__":
+    import uvicorn
+    host = os.environ.get("HOST", "0.0.0.0")
+    port = int(os.environ.get("PORT", "3001"))
+    # Use the src.api.main path which is stable when this file is executed from integration_backend/
+    uvicorn.run("src.api.main:app", host=host, port=port, reload=False, lifespan="on")
