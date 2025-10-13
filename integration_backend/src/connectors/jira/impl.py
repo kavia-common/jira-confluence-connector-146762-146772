@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional
 import httpx
 from fastapi import HTTPException, status
 
-from src.connectors.base.interface import BaseConnector
+from src.connectors.base.base_connector import BaseConnector
 from src.connectors.base.models import SearchResultItem, CreateResult, ConnectionStatus
 from src.db.token_store import save_tokens, get_tokens, get_token_record
 from src.api.oauth_config import get_jira_oauth_config, build_atlassian_authorize_url

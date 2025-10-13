@@ -37,9 +37,16 @@ def _status_from_store(store: TokenStore, tenant_id: str, provider: str) -> Conn
     rec = store.get_token(tenant_id, provider)
     if not rec:
         return ConnectionStatus(connected=False, scopes=None, expires_at=None, refreshed_at=None, error=None)
+    # Normalize scopes to list[str] if present as string
+    raw_scopes = rec.get("scopes")
+    scopes_list = None
+    if isinstance(raw_scopes, list):
+        scopes_list = [str(s) for s in raw_scopes]
+    elif isinstance(raw_scopes, str):
+        scopes_list = [s for s in raw_scopes.split() if s]
     return ConnectionStatus(
         connected=True if rec.get("access_token") or rec.get("pat") else False,
-        scopes=rec.get("scopes"),
+        scopes=scopes_list,
         expires_at=rec.get("expires_at"),
         refreshed_at=rec.get("refreshed_at"),
         error=rec.get("last_error"),
